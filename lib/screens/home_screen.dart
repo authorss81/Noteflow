@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/note_models.dart';
+import '../models/stroke.dart';
 import '../services/import_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -10,18 +11,37 @@ import 'editor_screen.dart';
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
+  String _strokeId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+
   Future<void> _importFiles(BuildContext context, AppState app) async {
     final import = ImportService();
     final files = await import.pickFiles();
     if (files.isEmpty) return;
     for (final f in files) {
       final ext = import.extensionOf(f.name);
+      final type = import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text';
       final path = await import.persistFile(f.name, f.bytes);
-      await app.addPage(
+      final page = await app.addPage(
         title: f.name,
         sourceFilePath: path,
-        sourceFileType: import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text',
+        sourceFileType: type,
       );
+      if (type == 'text') {
+        // Pre-render imported text as a text annotation so it's not a blank page.
+        final text = import.decodeText(f.bytes);
+        if (text.trim().isNotEmpty) {
+          await app.repo.saveStrokes(page.id, [
+            Stroke(
+              id: _strokeId(),
+              tool: StrokeTool.text,
+              color: const Color(0xFF1B365D),
+              width: 3,
+              text: text,
+              start: const Offset(32, 48),
+            )
+          ]);
+        }
+      }
     }
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

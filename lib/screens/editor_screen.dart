@@ -31,21 +31,33 @@ class _EditorScreenState extends State<EditorScreen> {
   List<Stroke> _strokes = [];
   ui.Image? _background;
   bool _loadingBg = false;
+  AppLifecycleListener? _lifecycle;
 
   @override
   void initState() {
     super.initState();
     _loadPage();
+    _lifecycle = AppLifecycleListener(
+      onStateChange: (state) {
+        if (state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached) {
+          widget.autosave.flush(_strokes);
+        }
+      },
+    );
   }
 
   Future<void> _loadPage() async {
+    if (!mounted) return;
     setState(() => _loadingBg = true);
     final strokes = await widget.autosave.repo.strokesFor(widget.page.id);
+    if (!mounted) return;
     _strokes = strokes;
 
     final src = widget.page.sourceFilePath;
     if (src != null) {
-      final f = await _import.loadPageImage(src);
+      final f = await _import.loadBackground(src, widget.page.sourceFileType ?? 'image');
       if (mounted) setState(() => _background = f);
     }
     if (mounted) setState(() => _loadingBg = false);
@@ -54,6 +66,7 @@ class _EditorScreenState extends State<EditorScreen> {
 
   @override
   void dispose() {
+    _lifecycle?.dispose();
     widget.autosave.flush(_strokes);
     widget.autosave.detach();
     _background?.dispose();
@@ -153,12 +166,14 @@ class _EditorScreenState extends State<EditorScreen> {
         versions: versions,
         current: _strokes,
         autosave: widget.autosave,
-        onRestore: (s) {
-          if (mounted) {
-            _strokes = s;
-            _canvasKey.currentState?.setStrokes(s);
-            widget.autosave.scheduleSave(s);
-          }
+        onRestore: (s) async {
+          if (!mounted) return;
+          // Preserve the current state before overwriting it with the restore.
+          await widget.autosave.manualSnapshot(_strokes, label: 'Before restore');
+          if (!mounted) return;
+          _strokes = s;
+          _canvasKey.currentState?.setStrokes(s);
+          widget.autosave.scheduleSave(s);
         },
       ),
     );

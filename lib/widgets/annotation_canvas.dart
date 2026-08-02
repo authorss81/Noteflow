@@ -52,10 +52,9 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
     }
   }
 
-  Offset _canvasPoint(Offset local) {
-    final m = _transform.value.clone()..invert();
-    return MatrixUtils.transformPoint(m, local);
-  }
+  /// GestureDetector is the direct child of InteractiveViewer, so
+  /// `localPosition` is already in canvas space — no inverse transform needed.
+  Offset _canvasPoint(Offset local) => local;
 
   void _beginStroke(Offset local) {
     final p = _canvasPoint(local);
@@ -72,12 +71,10 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
   void _endStroke(double pressure) {
     if (_points == null) return;
     final tool = widget.tool;
-    List<Stroke> produced;
     if (tool == StrokeTool.eraser) {
       _erase(_points!);
-      produced = [];
     } else if (tool == StrokeTool.pen || tool == StrokeTool.highlighter) {
-      produced = [
+      _commit([
         Stroke(
           id: _strokeId(),
           tool: tool,
@@ -85,12 +82,12 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
           width: widget.width * (1 + pressure),
           points: List.of(_points!),
         )
-      ];
-    } else if (tool == StrokeTool.text) {
-      produced = [];
-    } else {
-      // shapes: rect, line, arrow, ellipse
-      produced = [
+      ]);
+    } else if (tool == StrokeTool.rect ||
+        tool == StrokeTool.line ||
+        tool == StrokeTool.arrow ||
+        tool == StrokeTool.ellipse) {
+      _commit([
         Stroke(
           id: _strokeId(),
           tool: tool,
@@ -100,9 +97,8 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
           start: _dragStart,
           end: _points!.last,
         )
-      ];
+      ]);
     }
-    _commit(produced);
     _points = null;
     _dragStart = null;
   }
@@ -182,16 +178,23 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
   String _strokeId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 
   void _zoomAt(Offset focal, double scale) {
-    final newMatrix = Matrix4.identity()
+    final m = _transform.value.clone()
       ..translateByDouble(focal.dx, focal.dy, 0, 1)
       ..scaleByDouble(scale, scale, 1, 1)
       ..translateByDouble(-focal.dx, -focal.dy, 0, 1);
-    _transform.value = newMatrix;
+    _transform.value = m;
   }
 
-  void zoomIn() => _zoomAt(Offset.zero, 1.2);
-  void zoomOut() => _zoomAt(Offset.zero, 1 / 1.2);
+  void zoomIn() => _zoomAt(_viewportCenter(), 1.2);
+  void zoomOut() => _zoomAt(_viewportCenter(), 1 / 1.2);
   void fit() => _transform.value = Matrix4.identity();
+
+  /// Focal point at the center of the visible viewport, in canvas space.
+  Offset _viewportCenter() {
+    final size = context.size;
+    if (size == null) return Offset.zero;
+    return _transform.toScene(size.center(Offset.zero));
+  }
 
   @override
   Widget build(BuildContext context) {

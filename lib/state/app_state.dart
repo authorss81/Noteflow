@@ -15,6 +15,7 @@ class AppState extends ChangeNotifier {
 
   final AutosaveService _autosave;
   AutosaveService get autosave => _autosave;
+  NoteRepository get repo => _repo;
 
   AppThemeMode _theme = AppThemeMode.light;
   AppThemeMode get theme => _theme;

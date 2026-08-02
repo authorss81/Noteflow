@@ -18,15 +18,15 @@ Offline-first, privacy-focused note-taking app. **Import files as a canvas, anno
 | Import files (PDF / images / text) | ✅ via system picker (SAF on Android); bytes persisted to app storage |
 | Annotation canvas (infinite, pan/zoom) | ✅ pen, highlighter, eraser, text, rect, line, arrow, ellipse |
 | Pressure-sensitive pen | ✅ via pointer velocity (full 4096 S Pen pressure = later) |
-| Undo / Redo | ⚠️ partially done — eraser/text push duplicate undo frames (P0-3) |
-| Autosave (400ms debounce + on-close) | ⚠️ partially done — final flush on back/kill still fragile (P0-6) |
-| Version history (auto every 2 min + manual) | ⚠️ partially done — restore is irreversible, no preview (P0-7, P2) |
+| Undo / Redo | ✅ |
+| Autosave (400ms debounce + on-close) | ✅ drift/SQLite; flush on pause/exit |
+| Version history (auto every 2 min + manual) | ✅ restore from snapshots (pre-restore backup added) |
 | Notebooks → Sections → Pages | ✅ OneNote-style 3-pane |
 | Pin / rename / trash pages | ⚠️ partially done — no trash/restore UI, no notebook/section rename in UI |
 | Themes: Light / Sepia / Dark / AMOLED | ✅ warm paper palettes (M3) |
 | 3-pane desktop + tabbed mobile layout | ✅ |
 | Encryption-ready security layer | ⚠️ primitives ready, vault opt-in later |
-| PDF annotation rendering | ⚠️ MVP shows image background; PDF page rendering next (P0-4) |
+| PDF annotation rendering | ✅ PDF page 1 rendered as background (pdfrx) |
 | Online sync (Automerge CRDT + Rust axum) | 🔜 later milestone |
 | E2E encryption + OCR search | 🔜 later milestone |
 
@@ -98,17 +98,17 @@ Threat model: lost/stolen device, cloned backups. Not defending against rooted m
 
 ## Roadmap
 
-### Phase P0 — "Make it actually work" (fix critical bugs first) — partially done (6 remaining: P0-2, P0-3, P0-4, P0-5, P0-6, P0-7)
+### Phase P0 — "Make it actually work" (fix critical bugs first) — done (all 7)
 
 | # | Task | Status |
 |---|---|---|
 | P0-1 | Persist imported files to app storage; real `sourceFilePath` | ✅ done |
-| P0-2 | Canvas coordinates: drop double inverse-transform; zoom accumulates + zooms to center | ⏳ |
-| P0-3 | Eraser/text undo bug: remove duplicate commit frames | ⏳ |
-| P0-4 | Wire PDF (`pdfrx`) to render page 1 as background, or reject at import | ⏳ |
-| P0-5 | Text import: `utf8.decode(bytes)` → text strokes/layer | ⏳ |
-| P0-6 | Safe save on exit: flush in `PopScope` + `AppLifecycleListener` | ⏳ |
-| P0-7 | Snapshot before restore in version sheet (restore is irreversible) | ⏳ |
+| P0-2 | Canvas coordinates: drop double inverse-transform; zoom accumulates + zooms to center | ✅ done |
+| P0-3 | Eraser/text undo bug: remove duplicate commit frames | ✅ done |
+| P0-4 | Wire PDF (`pdfrx`) to render page 1 as background, or reject at import | ✅ done (renders page 1 via pdfrx) |
+| P0-5 | Text import: `utf8.decode(bytes)` → text strokes/layer | ✅ done (imports as text annotation) |
+| P0-6 | Safe save on exit: flush in `PopScope` + `AppLifecycleListener` | ✅ done (lifecycle flush on pause/exit) |
+| P0-7 | Snapshot before restore in version sheet (restore is irreversible) | ✅ done |
 
 ### Phase P1 — "Usable day-to-day" — pending (all 10)
 

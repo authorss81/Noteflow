@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -5,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdfrx/pdfrx.dart';
 
 /// Handles importing files (PDF, images, text) into the app's private storage
 /// and preparing them for use as a canvas.
@@ -72,6 +75,52 @@ class ImportService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Loads a page background for any supported source type (image or PDF).
+  Future<ui.Image?> loadBackground(String path, String type) async {
+    if (type == 'pdf') return loadPdfPage(path);
+    return loadPageImage(path);
+  }
+
+  /// Renders the first page of a PDF to an image (PDFium does the rendering
+  /// via pdfrx; raw BGRA pixels are converted to a ui.Image).
+  Future<ui.Image?> loadPdfPage(String path) async {
+    PdfDocument? doc;
+    try {
+      doc = await PdfDocument.openFile(path);
+      final pages = doc.pages;
+      if (pages.isEmpty) return null;
+      final page = pages.first;
+      if (!page.isLoaded) return null;
+      final rendered = await page.render(
+        width: page.width.round(),
+        height: page.height.round(),
+      );
+      if (rendered == null) return null;
+      final completer = Completer<ui.Image>();
+      ui.decodeImageFromPixels(
+        rendered.pixels,
+        rendered.width,
+        rendered.height,
+        ui.PixelFormat.bgra8888,
+        completer.complete,
+      );
+      final image = await completer.future;
+      rendered.dispose();
+      return image;
+    } catch (_) {
+      return null;
+    } finally {
+      await doc?.dispose();
+    }
+  }
+
+  /// Decodes text file bytes (handles BOM + UTF-8).
+  String decodeText(Uint8List bytes) {
+    var text = utf8.decode(bytes, allowMalformed: true);
+    if (text.startsWith('\uFEFF')) text = text.substring(1);
+    return text;
   }
 }
 
