@@ -1,17 +1,46 @@
 # Dart / Flutter
 .dart_tool/
 .packages
-build/
 .flutter-plugins
 .flutter-plugins-dependencies
-pubspec.lock
+build/
+.flutter_build/
 *.g.dart
+
+# Keep pubspec.lock for apps (reproducible builds for CI) - do NOT ignore.
+
+# Native
+*.class
+*.jar
+*.apk
+*.aab
+*.ap_
+*.dex
+!gradle-wrapper.jar
+local.properties
+.android/
+.gradle/
+gen-external-apklibs
 
 # IDE
 .idea/
 .vscode/
 *.iml
+*.swp
 
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Secrets / keys
+*.jks
+*.keystore
+*.p12
+key.properties
+service_account.json
+
+# Logs / temp
+*.log
+*.tmp
+.cache/
