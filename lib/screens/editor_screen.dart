@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flex_color_picker/flex_color_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/database.dart';
@@ -189,10 +190,54 @@ actions: [
             icon: const Icon(Icons.fit_screen),
             onPressed: () => _canvasKey.currentState?.fit(),
           ),
-          IconButton(
+IconButton(
             tooltip: 'Version history',
             icon: const Icon(Icons.history),
             onPressed: _showVersions,
+          ),
+          IconButton(
+            tooltip: 'Pick color',
+            icon: Icon(Icons.color_lens, color: _color),
+            onPressed: () async {
+              final picked = await pickColor(
+                context: context,
+                color: _color,
+                enableAlpha: false,
+                enableShades: true,
+                maxColors: 12,
+              );
+              if (picked != null && mounted) {
+                setState(() => _color = picked);
+              }
+            },
+          ),
+          IconButton(
+            tooltip: 'Stroke width',
+            icon: Icon(Icons.circle, size: _width.clamp(2, 24).toDouble()),
+            onPressed: () {
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (_) => Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Stroke width',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      Slider(
+                        value: _width,
+                        min: 1,
+                        max: 24,
+                        divisions: 23,
+                        onChanged: (w) => setState(() => _width = w),
+                        label: '${_width.round()}px',
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
           _EditorThemeMenu(),
           PopupMenuButton<StrokeTool>(
