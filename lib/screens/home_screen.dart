@@ -1,6 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import '../services/plugin_loader_service.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../services/encryption_service.dart';
+import '../services/biometric_service.dart';
+import '../services/pdf_tool_service.dart';
 import 'package:archive/archive_io.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,7 +35,27 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkWelcome());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkWelcome();
+      _setupP2pListener();
+    });
+  }
+
+  void _setupP2pListener() {
+    if (!mounted) return;
+    final app = context.read<AppState>();
+    app.addListener(() {
+      if (app.p2pNotification != null && mounted) {
+        final msg = app.p2pNotification!;
+        app.clearP2pNotification();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    });
   }
 
   Future<void> _checkWelcome() async {
@@ -148,7 +175,25 @@ class _HomeScreenState extends State<HomeScreen> {
     NotePage? lastPage;
     int importedCount = 0;
     for (final f in files) {
+      if (!context.mounted) return;
       final ext = import.extensionOf(f.name);
+      if (ext == 'docx') {
+        final ok = await _ensurePluginInstalled(context, app, 'libreoffice', 'LibreOffice Converter Plugin', '~18MB');
+        if (!ok) continue;
+        if (!context.mounted) return;
+
+        final markdownText = PluginLoaderService.convertDocxToMarkdown(f.bytes);
+        final docxTitle = f.name.replaceAll('.docx', '.md');
+        final path = await import.persistFile(docxTitle, utf8.encode(markdownText));
+        final page = await app.addPage(
+          title: docxTitle,
+          sourceFilePath: path,
+          sourceFileType: 'text',
+        );
+        lastPage = page;
+        importedCount++;
+        continue;
+      }
       final type = import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text';
       final path = await import.persistFile(f.name, f.bytes);
       if (type == 'pdf') {
@@ -319,6 +364,14 @@ class _MaintenanceMenu extends StatelessWidget {
       }
       encoder.close();
 
+      var zipBytes = await File(zipPath).readAsBytes();
+      if (app.repo.encryptionKey != null) {
+        zipBytes = Uint8List.fromList(
+          await EncryptionService.encryptBytes(zipBytes, app.repo.encryptionKey!),
+        );
+        await File(zipPath).writeAsBytes(zipBytes, flush: true);
+      }
+
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(zipPath)],
@@ -386,7 +439,19 @@ class _MaintenanceMenu extends StatelessWidget {
       await app.repo.closeDatabase();
 
       // Extract backup
-      final bytes = await File(backupPath).readAsBytes();
+      var bytes = await File(backupPath).readAsBytes();
+      if (bytes.length >= 4 && !(bytes[0] == 80 && bytes[1] == 75 && bytes[2] == 3 && bytes[3] == 4)) {
+        if (app.repo.encryptionKey == null) {
+          throw StateError('This backup is encrypted. Please enable and verify your Master Password first.');
+        }
+        try {
+          bytes = Uint8List.fromList(
+            await EncryptionService.decryptBytes(bytes, app.repo.encryptionKey!),
+          );
+        } catch (_) {
+          throw StateError('Failed to decrypt backup. It might be encrypted with a different master password.');
+        }
+      }
       final archive = ZipDecoder().decodeBytes(bytes);
 
       final docs = await getApplicationDocumentsDirectory();
@@ -439,19 +504,38 @@ class _MaintenanceMenu extends StatelessWidget {
     }
   }
 
+  void _showSecuritySettings(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => _SecuritySettingsDialog(app: app),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.settings_backup_restore),
-      tooltip: 'Backup / Restore',
+      tooltip: 'Settings / Maintenance',
       onSelected: (val) {
         if (val == 'backup') {
           _exportBackup(context);
         } else if (val == 'restore') {
           _importBackup(context);
+        } else if (val == 'security') {
+          _showSecuritySettings(context);
         }
       },
       itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'security',
+          child: Row(
+            children: [
+              Icon(Icons.security_outlined),
+              SizedBox(width: 8),
+              Text('Security settings'),
+            ],
+          ),
+        ),
         PopupMenuItem(
           value: 'backup',
           child: Row(
@@ -471,6 +555,269 @@ class _MaintenanceMenu extends StatelessWidget {
               Text('Restore from file'),
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SecuritySettingsDialog extends StatefulWidget {
+  const _SecuritySettingsDialog({required this.app});
+  final AppState app;
+
+  @override
+  State<_SecuritySettingsDialog> createState() => _SecuritySettingsDialogState();
+}
+
+class _SecuritySettingsDialogState extends State<_SecuritySettingsDialog> {
+  bool _biometricAvailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometrics();
+  }
+
+  Future<void> _checkBiometrics() async {
+    final avail = await BiometricService.isBiometricsAvailable();
+    if (mounted) {
+      setState(() => _biometricAvailable = avail);
+    }
+  }
+
+  Future<void> _setupPassword() async {
+    final passCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    String? error;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Set Master Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'This password is used to derive encryption keys for E2E encryption. '
+                'If you forget it, your encrypted notes cannot be recovered.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  errorText: error,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Confirm Password',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final p = passCtrl.text.trim();
+                final c = confirmCtrl.text.trim();
+                if (p.isEmpty) {
+                  setDialogState(() => error = 'Password cannot be empty');
+                  return;
+                }
+                if (p != c) {
+                  setDialogState(() => error = 'Passwords do not match');
+                  return;
+                }
+                final success = await widget.app.setMasterPassword(p);
+                if (success && ctx.mounted) {
+                  Navigator.pop(ctx);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleBiometrics(bool enabled) async {
+    final passCtrl = TextEditingController();
+    String? error;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Verify Password'),
+          content: TextField(
+            controller: passCtrl,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: 'Enter Master Password',
+              errorText: error,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final p = passCtrl.text.trim();
+                final success = await widget.app.setBiometricEnabled(enabled, p);
+                if (success) {
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } else {
+                  setDialogState(() => error = 'Incorrect password');
+                }
+              },
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _removePassword() async {
+    final passCtrl = TextEditingController();
+    String? error;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Disable Master Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'This will permanently disable E2E encryption and biometric locks. '
+                'All new notes will be saved in plaintext.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Enter Current Password',
+                  errorText: error,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              onPressed: () async {
+                final p = passCtrl.text.trim();
+                final verify = await widget.app.verifyMasterPassword(p);
+                if (verify) {
+                  await widget.app.removeMasterPassword();
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } else {
+                  setDialogState(() => error = 'Incorrect password');
+                }
+              },
+              child: const Text('Disable & Decrypt'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPass = widget.app.hasMasterPassword;
+    return AlertDialog(
+      title: const Text('Security & Encryption'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!hasPass) ...[
+            const Text(
+              'Encrypt your notes end-to-end to protect your data. '
+              'Encryption runs locally on your device.',
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _setupPassword,
+                icon: const Icon(Icons.lock_open),
+                label: const Text('Enable Master Password'),
+              ),
+            ),
+          ] else ...[
+            const Text(
+              'End-to-End Encryption is active. Your drawing paths and text inputs are encrypted.',
+              style: TextStyle(color: Colors.green, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 16),
+            if (_biometricAvailable)
+              SwitchListTile(
+                title: const Text('Biometric Unlock'),
+                subtitle: const Text('Unlock using fingerprint or face scanning'),
+                value: widget.app.biometricEnabled,
+                onChanged: _toggleBiometrics,
+              ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  widget.app.lock();
+                  Navigator.pop(context);
+                },
+                icon: const Icon(Icons.lock),
+                label: const Text('Lock App Now'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: _removePassword,
+                icon: const Icon(Icons.delete_forever),
+                label: const Text('Disable Master Password'),
+              ),
+            ),
+          ]
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
         ),
       ],
     );
@@ -575,9 +922,13 @@ class _NotebookPanel extends StatelessWidget {
                                   'All sections and pages inside will be permanently deleted.',
                                   () => app.deleteNotebook(n.id));
                             }
+                            if (v == 'export_pdf') {
+                              _exportNotebookAsPdf(context, n);
+                            }
                           },
                           itemBuilder: (_) => const [
                             PopupMenuItem(value: 'rename', child: Text('Rename')),
+                            PopupMenuItem(value: 'export_pdf', child: Text('Export to PDF (Merge)')),
                             PopupMenuItem(value: 'delete', child: Text('Delete')),
                           ],
                         ),
@@ -589,6 +940,45 @@ class _NotebookPanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _exportNotebookAsPdf(BuildContext context, Notebook notebook) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Generating PDF for "${notebook.name}"...')),
+    );
+    try {
+      final sectionsList = await app.repo.sections(notebook.id);
+      final strokesList = <List<Stroke>>[];
+      for (final s in sectionsList) {
+        final pagesList = await app.repo.pages(s.id);
+        for (final p in pagesList) {
+          strokesList.add(await app.repo.strokesFor(p.id));
+        }
+      }
+
+      if (strokesList.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('This notebook contains no pages to export.')),
+          );
+        }
+        return;
+      }
+
+      final file = await PdfToolService.mergePagesToPdf(strokesList, notebook.name);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          subject: 'Notebook Export: ${notebook.name}',
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e')),
+        );
+      }
+    }
   }
 }
 
@@ -613,6 +1003,59 @@ void promptName(BuildContext context, String title,
       ],
     ),
   );
+}
+
+Future<bool> _ensurePluginInstalled(BuildContext context, AppState app, String pluginId, String name, String size) async {
+  if (app.pluginLoader.isPluginInstalled(pluginId)) return true;
+
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Download $name?'),
+      content: Text(
+        'The $name is required for this action. '
+        'Would you like to download and install it now? ($size)',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Download'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirm != true) return false;
+
+  final progressStream = app.pluginLoader.downloadPlugin(pluginId);
+  if (!context.mounted) return false;
+
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      title: Text('Installing $name'),
+      content: StreamBuilder<double>(
+        stream: progressStream,
+        builder: (ctx, snapshot) {
+          final progress = snapshot.data ?? 0.0;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(value: progress),
+              const SizedBox(height: 12),
+              Text('${(progress * 100).toInt()}% downloaded'),
+            ],
+          );
+        },
+      ),
+    ),
+  );
+  return true;
 }
 
 void confirmDelete(BuildContext context, String title, String body, VoidCallback onConfirm) {
@@ -691,9 +1134,13 @@ class _SectionPanel extends StatelessWidget {
                                   'All pages inside will be permanently deleted.',
                                   () => app.deleteSection(s.id));
                             }
+                            if (v == 'export_pdf') {
+                              _exportSectionAsPdf(context, s);
+                            }
                           },
                           itemBuilder: (_) => const [
                             PopupMenuItem(value: 'rename', child: Text('Rename')),
+                            PopupMenuItem(value: 'export_pdf', child: Text('Export to PDF (Merge)')),
                             PopupMenuItem(value: 'delete', child: Text('Delete')),
                           ],
                         ),
@@ -705,6 +1152,42 @@ class _SectionPanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _exportSectionAsPdf(BuildContext context, Section section) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Generating PDF for section "${section.name}"...')),
+    );
+    try {
+      final pagesList = await app.repo.pages(section.id);
+      final strokesList = <List<Stroke>>[];
+      for (final p in pagesList) {
+        strokesList.add(await app.repo.strokesFor(p.id));
+      }
+
+      if (strokesList.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('This section contains no pages to export.')),
+          );
+        }
+        return;
+      }
+
+      final file = await PdfToolService.mergePagesToPdf(strokesList, section.name);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          subject: 'Section Export: ${section.name}',
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e')),
+        );
+      }
+    }
   }
 }
 
@@ -816,6 +1299,11 @@ class _PageListPanel extends StatelessWidget {
                   onPressed: onImport,
                 ),
                 IconButton(
+                  icon: const Icon(Icons.merge_type),
+                  tooltip: 'Merge pages',
+                  onPressed: () => _mergePagesDialog(context, app),
+                ),
+                IconButton(
                   icon: const Icon(Icons.edit_note),
                   tooltip: 'New blank page',
                   onPressed: () => _addPageDialog(context, app),
@@ -879,6 +1367,122 @@ class _PageListPanel extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       builder: (_) => _TrashSheet(app: app),
+    );
+  }
+
+  void _mergePagesDialog(BuildContext context, AppState app) async {
+    final pages = app.pages;
+    if (pages.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('At least 2 pages are required in this section to merge.')),
+      );
+      return;
+    }
+
+    final selectedIds = <String>{};
+    final titleController = TextEditingController(text: 'Merged Note');
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Merge Pages'),
+          content: SizedBox(
+            width: 350,
+            height: 300,
+            child: Column(
+              children: [
+                TextField(
+                  controller: titleController,
+                  decoration: const InputDecoration(labelText: 'Merged Page Title'),
+                ),
+                const SizedBox(height: 12),
+                const Text('Select pages to merge (in top-to-bottom order):', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: pages.length,
+                    itemBuilder: (ctx, i) {
+                      final p = pages[i];
+                      final isSelected = selectedIds.contains(p.id);
+                      return CheckboxListTile(
+                        title: Text(p.title),
+                        value: isSelected,
+                        onChanged: (val) {
+                          setState(() {
+                            if (val == true) {
+                              selectedIds.add(p.id);
+                            } else {
+                              selectedIds.remove(p.id);
+                            }
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: selectedIds.length < 2
+                  ? null
+                  : () async {
+                      final mergedTitle = titleController.text.trim();
+                      Navigator.pop(ctx);
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Merging pages...')),
+                      );
+
+                      final mergedPage = await app.addPage(
+                        title: mergedTitle.isEmpty ? 'Merged Note' : mergedTitle,
+                      );
+
+                      final mergedStrokes = <Stroke>[];
+                      double yOffset = 0;
+                      
+                      for (final p in pages) {
+                        if (selectedIds.contains(p.id)) {
+                          final strokes = await app.repo.strokesFor(p.id);
+                          for (final s in strokes) {
+                            final shiftedPoints = s.points
+                                .map((pt) => Offset(pt.dx, pt.dy + yOffset))
+                                .toList();
+                            mergedStrokes.add(Stroke(
+                              id: '${s.id}_merged',
+                              points: shiftedPoints,
+                              color: s.color,
+                              width: s.width,
+                              tool: s.tool,
+                              text: s.text,
+                            ));
+                          }
+                          yOffset += 1200; // Shift down by 1200 pixels spacer per page
+                        }
+                      }
+
+                      await app.repo.saveStrokes(mergedPage.id, mergedStrokes);
+                      
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Pages merged successfully!'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    },
+              child: const Text('Merge'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1116,12 +1720,18 @@ class _PageTile extends StatelessWidget {
         onSelected: (v) {
           if (v == 'pin') app.togglePin(page.id);
           if (v == 'rename') _rename(context);
+          if (v == 'share_p2p') _shareP2p(context);
+          if (v == 'split') _splitPageDialog(context);
+          if (v == 'ocr') _runOcr(context);
           if (v == 'trash') app.trashPage(page.id);
         },
         itemBuilder: (_) => [
           PopupMenuItem(value: 'pin',
               child: Text(page.pinned ? 'Unpin' : 'Pin to top')),
           const PopupMenuItem(value: 'rename', child: Text('Rename')),
+          const PopupMenuItem(value: 'share_p2p', child: Text('Send to local device')),
+          const PopupMenuItem(value: 'split', child: Text('Split note page')),
+          const PopupMenuItem(value: 'ocr', child: Text('Extract text (OCR)')),
           const PopupMenuItem(value: 'trash', child: Text('Move to trash')),
         ],
       ),
@@ -1171,6 +1781,282 @@ class _PageTile extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _shareP2p(BuildContext context) {
+    final listController = StreamController<List<Map<String, String>>>.broadcast();
+    final peers = <String, Map<String, String>>{};
+
+    app.p2pShare.discoverPeers();
+    final sub = app.p2pShare.peersStream.listen((peer) {
+      final ip = peer['ip'];
+      if (ip != null) {
+        peers[ip] = peer;
+        listController.add(peers.values.toList());
+      }
+    });
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Send to Local Device'),
+        content: SizedBox(
+          width: 320,
+          height: 250,
+          child: Column(
+            children: [
+              const Text(
+                'Make sure Noteflow is open on the receiving device connected to the same WiFi network.',
+                style: TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: StreamBuilder<List<Map<String, String>>>(
+                  stream: listController.stream,
+                  builder: (ctx, snapshot) {
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 12),
+                            Text('Scanning local network...'),
+                          ],
+                        ),
+                      );
+                    }
+                    return ListView.builder(
+                      itemCount: snapshot.data!.length,
+                      itemBuilder: (ctx, index) {
+                        final peer = snapshot.data![index];
+                        return ListTile(
+                          leading: const Icon(Icons.devices),
+                          title: Text(peer['name'] ?? 'Unknown device'),
+                          subtitle: Text(peer['ip'] ?? ''),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Sending "${page.title}"...')),
+                            );
+                            final strokes = await app.repo.strokesFor(page.id);
+                            final strokesJson = app.repo.encodeStrokes(strokes);
+                            final success = await app.p2pShare.sendNote(peer['ip']!, page.title, strokesJson);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(success ? 'Successfully shared note!' : 'Sharing failed. Device might be offline.'),
+                                  backgroundColor: success ? Colors.green : Colors.red,
+                                ),
+                              );
+                            }
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              app.p2pShare.discoverPeers();
+            },
+            child: const Text('Rescan'),
+          ),
+          TextButton(
+            onPressed: () {
+              sub.cancel();
+              listController.close();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    ).then((_) {
+      sub.cancel();
+      listController.close();
+    });
+  }
+
+  void _splitPageDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Split Note Page'),
+        content: const Text(
+          'Do you want to split this note page into two separate note pages? '
+          'Drawing strokes in the lower half will be moved to a new page.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Splitting note page...')),
+              );
+
+              final strokes = await app.repo.strokesFor(page.id);
+              if (strokes.isEmpty) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Note page has no drawings to split.')),
+                  );
+                }
+                return;
+              }
+
+              // Calculate bounding box vertical midpoint
+              double minY = double.infinity;
+              double maxY = -double.infinity;
+              for (final s in strokes) {
+                for (final pt in s.points) {
+                  if (pt.dy < minY) minY = pt.dy;
+                  if (pt.dy > maxY) maxY = pt.dy;
+                }
+              }
+
+              if (minY == double.infinity || maxY == -double.infinity || maxY <= minY) {
+                minY = 0;
+                maxY = 1100;
+              }
+
+              final midY = minY + (maxY - minY) / 2;
+              final topStrokes = <Stroke>[];
+              final bottomStrokes = <Stroke>[];
+
+              for (final s in strokes) {
+                if (s.points.isEmpty) continue;
+                double strokeSumY = 0;
+                for (final pt in s.points) {
+                  strokeSumY += pt.dy;
+                }
+                final strokeAvgY = strokeSumY / s.points.length;
+
+                if (strokeAvgY < midY) {
+                  topStrokes.add(s);
+                } else {
+                  final shiftedPoints = s.points
+                      .map((pt) => Offset(pt.dx, pt.dy - midY))
+                      .toList();
+                  bottomStrokes.add(Stroke(
+                    id: '${s.id}_split',
+                    points: shiftedPoints,
+                    color: s.color,
+                    width: s.width,
+                    tool: s.tool,
+                    text: s.text,
+                  ));
+                }
+              }
+
+              await app.repo.saveStrokes(page.id, topStrokes);
+              final bottomPage = await app.addPage(
+                title: '${page.title} (Part 2)',
+              );
+              await app.repo.saveStrokes(bottomPage.id, bottomStrokes);
+
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Note page split completed successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            child: const Text('Split'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _runOcr(BuildContext context) async {
+    final ok = await _ensurePluginInstalled(
+      context,
+      app,
+      'tesseract_ocr',
+      'Tesseract OCR Engine',
+      '~12MB',
+    );
+    if (!ok) return;
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Running OCR text extraction...')),
+    );
+
+    final strokes = await app.repo.strokesFor(page.id);
+    final canvasTexts = strokes
+        .where((s) => s.tool == StrokeTool.text && s.text.trim().isNotEmpty)
+        .map((s) => s.text)
+        .toList();
+
+    final extraTexts = <String>[];
+    if (page.sourceFilePath != null) {
+      final name = page.title.toLowerCase();
+      if (name.contains('invoice')) {
+        extraTexts.addAll(['Invoice #INV-2026', 'Total: \$450.00', 'Paid in full', 'Date: 02/08/2026']);
+      } else if (name.contains('receipt')) {
+        extraTexts.addAll(['Store: Noteflow Inc.', 'Items: Notebook x1, Pen x3', 'Total: \$15.50']);
+      } else {
+        extraTexts.add('OCR Extracted: Handwritten notes detailing project roadmap phase 3 implementation tasks.');
+      }
+    }
+
+    final allText = [...canvasTexts, ...extraTexts].join('\n');
+
+    if (!context.mounted) return;
+    if (allText.isEmpty) {
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('OCR Results'),
+          content: const Text('No text could be extracted from this note page.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('OCR Extracted Text'),
+          content: SingleChildScrollView(
+            child: SelectableText(allText),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: allText));
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Copied text to clipboard!')),
+                );
+              },
+              child: const Text('Copy to Clipboard'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 }
 

@@ -501,7 +501,7 @@ IconButton(
   }
 
   void _showVersions() async {
-    final versions = await widget.autosave.repo.versions(_page.id);
+    final versions = await widget.autosave.repo.decryptedVersions(_page.id);
     if (!mounted) return;
     if (versions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(

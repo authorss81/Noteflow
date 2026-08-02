@@ -6,6 +6,7 @@ class SettingsService {
   SettingsService(this._prefs);
 
   final SharedPreferences _prefs;
+  SharedPreferences get prefs => _prefs;
 
   static const _themeKey = 'theme_mode';
   static const _notebookKey = 'active_notebook';

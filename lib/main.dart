@@ -5,9 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'data/database.dart';
 import 'data/repository.dart';
 import 'screens/home_screen.dart';
+import 'widgets/lock_screen.dart';
 import 'services/settings_service.dart';
 import 'state/app_state.dart';
-import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,8 +34,9 @@ class NoteflowApp extends StatelessWidget {
           return MaterialApp(
             title: 'Noteflow',
             debugShowCheckedModeBanner: false,
-            theme: AppTheme.build(app.theme),
-            home: const HomeScreen(),
+            home: app.hasMasterPassword && !app.authenticated
+                ? const LockScreen()
+                : const HomeScreen(),
           );
         },
       ),

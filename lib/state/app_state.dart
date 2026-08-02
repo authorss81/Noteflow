@@ -1,14 +1,33 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../data/repository.dart';
 import '../models/note_models.dart';
 import '../services/autosave_service.dart';
 import '../services/settings_service.dart';
+import '../services/encryption_service.dart';
+import '../services/p2p_share_service.dart';
+import '../services/plugin_loader_service.dart';
 import '../theme/app_theme.dart';
 
 /// Central app state: theme, active notebook/section/page, and navigation.
 class AppState extends ChangeNotifier {
-  AppState(this._repo, this._settings) : _autosave = AutosaveService(_repo);
+  AppState(this._repo, this._settings) : _autosave = AutosaveService(_repo) {
+    _pluginLoader = PluginLoaderService(_settings.prefs);
+  }
+
+  late final PluginLoaderService _pluginLoader;
+  PluginLoaderService get pluginLoader => _pluginLoader;
+
+  final _secureStorage = const FlutterSecureStorage();
+  final _p2pShare = P2pShareService();
+
+  P2pShareService get p2pShare => _p2pShare;
+  String? p2pNotification;
+
+  void clearP2pNotification() {
+    p2pNotification = null;
+  }
 
   final NoteRepository _repo;
   final SettingsService _settings;
@@ -89,8 +108,25 @@ class AppState extends ChangeNotifier {
     if (lastNb != null && _notebooks.any((n) => n.id == lastNb)) {
       await _reloadTree(selectNotebook: lastNb, selectSection: lastSec);
     }
+    await _p2pShare.startServer(_onReceiveP2pNote);
     _loaded = true;
     notifyListeners();
+  }
+
+  Future<void> _onReceiveP2pNote(String title, String strokesJson) async {
+    try {
+      final p = await addPage(title: title);
+      final strokes = _repo.decodeStrokes(strokesJson);
+      await _repo.saveStrokes(p.id, strokes);
+      p2pNotification = "Received note '$title' from peer!";
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _p2pShare.dispose();
+    super.dispose();
   }
 
   Future<void> _reloadTree({
@@ -258,4 +294,94 @@ class AppState extends ChangeNotifier {
   }
 
   String _uuid() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+
+  bool _authenticated = false;
+  bool get authenticated => _authenticated;
+
+  bool get hasMasterPassword => _settings.prefs.getString('master_password_salt') != null;
+  bool get biometricEnabled => _settings.prefs.getBool('biometric_auth_enabled') ?? false;
+
+  Future<bool> setMasterPassword(String password) async {
+    try {
+      final salt = _uuid().codeUnits.sublist(0, 16);
+      final key = await EncryptionService.deriveKey(password, salt);
+      final verifier = await EncryptionService.encrypt('noteflow_verifier', key);
+
+      await _settings.prefs.setString('master_password_salt', String.fromCharCodes(salt));
+      await _settings.prefs.setString('master_password_verifier', verifier);
+
+      _repo.encryptionKey = key;
+      _authenticated = true;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> verifyMasterPassword(String password) async {
+    try {
+      final saltString = _settings.prefs.getString('master_password_salt');
+      final verifier = _settings.prefs.getString('master_password_verifier');
+      if (saltString == null || verifier == null) return false;
+
+      final salt = saltString.codeUnits;
+      final key = await EncryptionService.deriveKey(password, salt);
+      final decrypted = await EncryptionService.decrypt(verifier, key);
+
+      if (decrypted == 'noteflow_verifier') {
+        _repo.encryptionKey = key;
+        _authenticated = true;
+        notifyListeners();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<bool> setBiometricEnabled(bool enabled, String masterPassword) async {
+    try {
+      final verify = await verifyMasterPassword(masterPassword);
+      if (!verify) return false;
+
+      if (enabled) {
+        await _secureStorage.write(key: 'master_password', value: masterPassword);
+        await _settings.prefs.setBool('biometric_auth_enabled', true);
+      } else {
+        await _secureStorage.delete(key: 'master_password');
+        await _settings.prefs.setBool('biometric_auth_enabled', false);
+      }
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> verifyBiometricsAndUnlock() async {
+    if (!biometricEnabled) return false;
+    try {
+      final masterPassword = await _secureStorage.read(key: 'master_password');
+      if (masterPassword == null) return false;
+      return await verifyMasterPassword(masterPassword);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> removeMasterPassword() async {
+    await _settings.prefs.remove('master_password_salt');
+    await _settings.prefs.remove('master_password_verifier');
+    await _settings.prefs.remove('biometric_auth_enabled');
+    await _secureStorage.delete(key: 'master_password');
+    _repo.encryptionKey = null;
+    _authenticated = false;
+    notifyListeners();
+  }
+
+  void lock() {
+    _repo.encryptionKey = null;
+    _authenticated = false;
+    notifyListeners();
+  }
 }

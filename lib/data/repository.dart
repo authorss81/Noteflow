@@ -1,16 +1,20 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:cryptography/cryptography.dart';
 
 import 'database.dart' hide Notebook, Section;
 import 'database.dart' as drift;
 import '../models/note_models.dart';
 import '../models/stroke.dart';
 import '../services/import_service.dart';
+import '../services/encryption_service.dart';
 
 /// High-level access to notes data, abstracting the database.
 class NoteRepository {
   final AppDatabase _db;
+  SecretKey? encryptionKey;
+
   NoteRepository(this._db);
 
   Future<void> closeDatabase() => _db.close();
@@ -159,7 +163,16 @@ class NoteRepository {
 
   // ---- Strokes content ----
   Future<List<Stroke>> strokesFor(String pageId) async {
-    final json = await _db.contentFor(pageId);
+    var json = await _db.contentFor(pageId);
+    if (json != null && json.isNotEmpty && encryptionKey != null) {
+      if (!json.trim().startsWith('[')) {
+        try {
+          json = await EncryptionService.decrypt(json, encryptionKey!);
+        } catch (_) {
+          return [];
+        }
+      }
+    }
     return decodeStrokes(json);
   }
 
@@ -177,16 +190,24 @@ class NoteRepository {
       jsonEncode(strokes.map((s) => s.toJson()).toList());
 
   Future<void> saveStrokes(String pageId, List<Stroke> strokes) async {
-    await _db.saveContent(pageId, encodeStrokes(strokes));
+    var rawJson = encodeStrokes(strokes);
+    if (encryptionKey != null) {
+      rawJson = await EncryptionService.encrypt(rawJson, encryptionKey!);
+    }
+    await _db.saveContent(pageId, rawJson);
     await _db.touchPage(pageId);
   }
 
   // ---- Versions ----
   Future<void> snapshot(String pageId, String strokesJson, {String label = ''}) async {
-    await _db.insertVersion(PageVersionsCompanion.insert(
+    var finalJson = strokesJson;
+    if (encryptionKey != null && strokesJson.trim().startsWith('[')) {
+      finalJson = await EncryptionService.encrypt(strokesJson, encryptionKey!);
+    }
+    await _db.insertVersion(drift.PageVersionsCompanion.insert(
       id: _id(),
       pageId: pageId,
-      strokesJson: strokesJson,
+      strokesJson: finalJson,
       label: Value(label),
       createdAt: DateTime.now(),
     ));
@@ -194,6 +215,27 @@ class NoteRepository {
   }
 
   Future<List<PageVersion>> versions(String pageId) => _db.versionsFor(pageId);
+
+  Future<List<PageVersion>> decryptedVersions(String pageId) async {
+    final raw = await versions(pageId);
+    final decrypted = <PageVersion>[];
+    for (final v in raw) {
+      var json = v.strokesJson;
+      if (encryptionKey != null && !json.trim().startsWith('[')) {
+        try {
+          json = await EncryptionService.decrypt(json, encryptionKey!);
+        } catch (_) {}
+      }
+      decrypted.add(PageVersion(
+        id: v.id,
+        pageId: v.pageId,
+        strokesJson: json,
+        label: v.label,
+        createdAt: v.createdAt,
+      ));
+    }
+    return decrypted;
+  }
 
   Future<void> insertNotebook(Notebook n) => _db.insertNotebook(NotebooksCompanion.insert(
         id: n.id,
