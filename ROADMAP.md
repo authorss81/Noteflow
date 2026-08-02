@@ -243,6 +243,7 @@
 
 ### P3-1: E2E encryption for notes
 
+**Integration Type:** Core Feature
 **Approach:**
 - Use existing `cryptography` package (already imported)
 - **Key derivation:** Argon2id from user password (built into `cryptography`)
@@ -259,6 +260,7 @@
 
 ### P3-2: Biometric authentication (fingerprint / face)
 
+**Integration Type:** Core Feature
 **Approach:**
 - `flutter_biometric_auth_plus` — FOSS, works on all 6 platforms including web (WebAuthn)
 - PIN fallback using `flutter_auth_screen` (pure UI, no business logic)
@@ -273,6 +275,7 @@
 
 ### P3-3: Secure backup/export with encryption
 
+**Integration Type:** Core Feature
 **Approach:**
 - Export: `.noteflow` ZIP containing (manifest.json + 5 tables JSON + files/)
 - Encrypt ZIP with AES-256-GCM using a user-chosen password
@@ -287,6 +290,7 @@
 
 ### P3-4: LocalSend integration (peer-to-peer sharing)
 
+**Integration Type:** Core Feature (Native REST Client)
 **Approach:**
 - LocalSend uses a documented REST API over HTTPS on port 53317
 - Implement a client in Dart using `http` package
@@ -301,6 +305,7 @@
 
 ### P3-5: PDF24-style PDF tools (merge, split, compress)
 
+**Integration Type:** Core Feature (Native Library)
 **Approach:**
 - Implement natively in Flutter — do NOT depend on PDF24's web tools
 - `pdf_utils` or `pdf_manipulator` package for merge/split/compress
@@ -314,6 +319,7 @@
 
 ### P3-6: OCR with Tesseract (searchable notes from images/PDFs)
 
+**Integration Type:** Optional Plugin
 **Approach:**
 - `tesseract_ocr` package for on-device OCR
 - Bundle `eng.traineddata` in app assets
@@ -330,6 +336,7 @@
 
 ### P3-7: Markdown + LaTeX rendering for notes
 
+**Integration Type:** Core Feature
 **Approach:**
 - `flutter_markdown_plus` for Markdown rendering
 - `ratex_flutter` for LaTeX (native Dart FFI, no WebView, best performance)
@@ -343,6 +350,7 @@
 
 ### P3-8: LibreOffice document conversion (DOCX → PDF)
 
+**Integration Type:** Optional Plugin
 **Approach:**
 - `libre_office_kit_converter_plugin` for offline DOCX/XLSX/PPTX → PDF conversion
 - Converts documents to PDF, then user can annotate them in Noteflow
@@ -356,6 +364,7 @@
 
 ### P3-9: Bitwarden vault integration (password-protected notes)
 
+**Integration Type:** External Integration
 **Approach:**
 - Use Bitwarden's Vault Management API (`bw serve` CLI) for programmatic access
 - Store encryption keys for protected notes in Bitwarden
@@ -370,6 +379,7 @@
 
 ### P3-10: 7-Zip / archive compression for exports
 
+**Integration Type:** Core Feature
 **Approach:**
 - `archive` package (pure Dart) for ZIP/gzip/tar creation
 - Use for encrypted backup exports and batch file sharing
@@ -383,6 +393,7 @@
 
 ### P3-11: HandBrake-style video compression (for video notes)
 
+**Integration Type:** Declined (Replaced by Native Light Compressor)
 **Approach:**
 - `video_compress` or `v_video_compressor` for in-app video compression
 - **Not** HandBrake integration (no CLI/API available)
