@@ -35,6 +35,10 @@ dependencies:
   collection: ^1.18.0
   shared_preferences: ^2.3.2
 
+  # Markdown rendering
+  flutter_markdown_plus: ^0.2.0
+  markdown: ^4.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -9,6 +9,7 @@ import '../services/import_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'editor_screen.dart';
+import 'markdown_preview_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -206,12 +207,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     // Open the last imported page in the editor right away.
     if (lastPage != null) {
-      Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => EditorScreen(
-          page: lastPage!,
-          autosave: app.autosave,
-        ),
-      ));
+      final lastExt = import.extensionOf(lastPage.title);
+      if (lastExt == 'md') {
+        Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => MarkdownPreviewScreen(
+            page: lastPage!,
+            autosave: app.autosave,
+          ),
+        ));
+      } else {
+        Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => EditorScreen(
+            page: lastPage!,
+            autosave: app.autosave,
+          ),
+        ));
+      }
     }
   }
 
@@ -829,12 +840,23 @@ class _PageTile extends StatelessWidget {
   }
 
   void _openEditor(BuildContext context) {
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => EditorScreen(
-        page: page,
-        autosave: app.autosave,
-      ),
-    ));
+    final importer = ImportService();
+    final ext = importer.extensionOf(page.title);
+    if (ext == 'md') {
+      Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => MarkdownPreviewScreen(
+          page: page,
+          autosave: app.autosave,
+        ),
+      ));
+    } else {
+      Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => EditorScreen(
+          page: page,
+          autosave: app.autosave,
+        ),
+      ));
+    }
   }
 
   void _rename(BuildContext context) {
