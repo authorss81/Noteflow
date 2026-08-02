@@ -27,7 +27,7 @@ jobs:
         run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Build Web App
-        run: flutter build web --release --base-href="/Noteflow/"
+        run: flutter build web --profile --base-href="/Noteflow/"
 
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
