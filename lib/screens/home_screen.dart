@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -137,36 +139,70 @@ class _HomeScreenState extends State<HomeScreen> {
     final files = await import.pickFiles();
     if (files.isEmpty) return;
     NotePage? lastPage;
+    int importedCount = 0;
     for (final f in files) {
       final ext = import.extensionOf(f.name);
       final type = import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text';
       final path = await import.persistFile(f.name, f.bytes);
-      final page = await app.addPage(
-        title: f.name,
-        sourceFilePath: path,
-        sourceFileType: type,
-      );
-      lastPage = page;
-      if (type == 'text') {
-        // Pre-render imported text as a text annotation so it's not a blank page.
-        final text = import.decodeText(f.bytes);
-        if (text.trim().isNotEmpty) {
-          await app.repo.saveStrokes(page.id, [
-            Stroke(
-              id: _strokeId(),
-              tool: StrokeTool.text,
-              color: const Color(0xFF1B365D),
-              width: 3,
-              text: text,
-              start: const Offset(32, 48),
-            )
-          ]);
+      if (type == 'pdf') {
+        // Multipage PDF: render all pages, create a NotePage per page.
+        final pages = await import.loadPdfPages(path);
+        if (pages.isEmpty) {
+          // Fallback: create a single page with no background.
+          final page = await app.addPage(
+            title: f.name,
+            sourceFilePath: path,
+            sourceFileType: type,
+          );
+          lastPage = page;
+          importedCount++;
+        }
+        for (var i = 0; i < pages.length; i++) {
+          final (image, pageIndex) = pages[i];
+          // Save the rendered page as a PNG file so it persists independently.
+          final pageFileName = '${f.name}_page_${pageIndex + 1}.png';
+          final pagePath = await import.persistFile(pageFileName, await image.toByteData(format: ui.ImageByteFormat.png)!.buffer.asUint8List());
+          final pageTitle = pages.length == 1
+              ? f.name
+              : '${f.name} (page ${pageIndex + 1})';
+          final page = await app.addPage(
+            title: pageTitle,
+            sourceFilePath: pagePath,
+            sourceFileType: 'image',
+            pageIndex: pageIndex,
+          );
+          lastPage = page;
+          importedCount++;
+        }
+      } else {
+        final page = await app.addPage(
+          title: f.name,
+          sourceFilePath: path,
+          sourceFileType: type,
+        );
+        lastPage = page;
+        importedCount++;
+        if (type == 'text') {
+          // Pre-render imported text as a text annotation so it's not a blank page.
+          final text = import.decodeText(f.bytes);
+          if (text.trim().isNotEmpty) {
+            await app.repo.saveStrokes(page.id, [
+              Stroke(
+                id: _strokeId(),
+                tool: StrokeTool.text,
+                color: const Color(0xFF1B365D),
+                width: 3,
+                text: text,
+                start: const Offset(32, 48),
+              )
+            ]);
+          }
         }
       }
     }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Imported ${files.length} file(s)')),
+      SnackBar(content: Text('Imported $importedCount page(s)')),
     );
     // Open the last imported page in the editor right away.
     if (lastPage != null) {

@@ -83,21 +83,55 @@ class ImportService {
     return loadPageImage(path);
   }
 
-  /// Renders the first page of a PDF to an image (PDFium does the rendering
-  /// via pdfrx; raw BGRA pixels are converted to a ui.Image).
-  Future<ui.Image?> loadPdfPage(String path) async {
-    PdfDocument? doc;
-    try {
-      doc = await PdfDocument.openFile(path);
-      final pages = doc.pages;
-      if (pages.isEmpty) return null;
-      final page = pages.first;
-      if (!page.isLoaded) return null;
+/// Renders the first page of a PDF to an image (PDFium does the rendering
+/// via pdfrx; raw BGRA pixels are converted to a ui.Image).
+Future<ui.Image?> loadPdfPage(String path) async {
+  PdfDocument? doc;
+  try {
+    doc = await PdfDocument.openFile(path);
+    final pages = doc.pages;
+    if (pages.isEmpty) return null;
+    final page = pages.first;
+    if (!page.isLoaded) return null;
+    final rendered = await page.render(
+      width: page.width.round(),
+      height: page.height.round(),
+    );
+    if (rendered == null) return null;
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+      rendered.pixels,
+      rendered.width,
+      rendered.height,
+      ui.PixelFormat.bgra8888,
+      completer.complete,
+    );
+    final image = await completer.future;
+    rendered.dispose();
+    return image;
+  } catch (_) {
+    return null;
+  } finally {
+    await doc?.dispose();
+  }
+}
+
+/// Renders all pages of a PDF to images, returning (image, pageIndex) pairs.
+/// Uses pdfrx to render each page at its native resolution.
+Future<List<(ui.Image, int)>> loadPdfPages(String path) async {
+  PdfDocument? doc;
+  try {
+    doc = await PdfDocument.openFile(path);
+    final pages = doc.pages;
+    final results = <(ui.Image, int)>[];
+    for (var i = 0; i < pages.length; i++) {
+      final page = pages[i];
+      if (!page.isLoaded) continue;
       final rendered = await page.render(
         width: page.width.round(),
         height: page.height.round(),
       );
-      if (rendered == null) return null;
+      if (rendered == null) continue;
       final completer = Completer<ui.Image>();
       ui.decodeImageFromPixels(
         rendered.pixels,
@@ -108,13 +142,15 @@ class ImportService {
       );
       final image = await completer.future;
       rendered.dispose();
-      return image;
-    } catch (_) {
-      return null;
-    } finally {
-      await doc?.dispose();
+      results.add((image, i));
     }
+    return results;
+  } catch (_) {
+    return [];
+  } finally {
+    await doc?.dispose();
   }
+}
 
   /// Decodes text file bytes (handles BOM + UTF-8).
   String decodeText(Uint8List bytes) {

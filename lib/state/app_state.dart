@@ -164,7 +164,7 @@ class AppState extends ChangeNotifier {
     await _reloadTree();
   }
 
-  Future<NotePage> addPage({String? title, String? sourceFilePath, String? sourceFileType}) async {
+  Future<NotePage> addPage({String? title, String? sourceFilePath, String? sourceFileType, int pageIndex = 0}) async {
     final section = _section ?? (_sections.isNotEmpty ? _sections.first : null);
     if (section == null) {
       throw StateError('No section selected');
@@ -174,6 +174,7 @@ class AppState extends ChangeNotifier {
       title: title ?? 'Untitled',
       sourceFilePath: sourceFilePath,
       sourceFileType: sourceFileType,
+      pageIndex: pageIndex,
     );
     await _reloadTree();
     await selectPage(p.id);
