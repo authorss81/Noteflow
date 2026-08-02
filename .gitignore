@@ -44,3 +44,8 @@ service_account.json
 *.log
 *.tmp
 .cache/
+
+# Node
+node_modules/
+package.json
+package-lock.json
