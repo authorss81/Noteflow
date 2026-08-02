@@ -1,13 +1,11 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../models/note_models.dart';
 import '../services/import_service.dart';
-import '../theme/app_theme.dart';
+import '../services/autosave_service.dart';
 import 'editor_screen.dart';
 
 class MarkdownPreviewScreen extends StatefulWidget {
@@ -119,13 +117,6 @@ class _MarkdownPreviewScreenState extends State<MarkdownPreviewScreen> {
                         code: TextStyle(
                           backgroundColor: scheme.surfaceContainerHighest,
                           fontFamily: 'monospace',
-                        ),
-                        blockquote: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          borderLeft: BorderSide(
-                            color: scheme.primary,
-                            width: 3,
-                          ),
                         ),
                         listBullet: TextStyle(color: scheme.onSurface),
                         tableHead: TextStyle(

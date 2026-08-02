@@ -1,7 +1,6 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flex_color_picker/flex_color_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/database.dart';
@@ -122,8 +121,114 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  String _formatTime(DateTime t) =>
+String _formatTime(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Future<Color?> _pickColorDialog(BuildContext context, Color initial) {
+    Color picked = initial;
+    return showDialog<Color>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Pick color'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: [
+                    for (final c in _EditorBody._colors)
+                      Material(
+                        color: c,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => Navigator.pop(ctx, c),
+                          child: SizedBox(width: 32, height: 32),
+                        ),
+                      ),
+                    Material(
+                      color: picked,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => Navigator.pop(ctx, picked),
+                        child: SizedBox(width: 32, height: 32),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Slider(
+                        value: picked.r / 255,
+                        min: 0,
+                        max: 1,
+                        onChanged: (v) {
+                          picked = Color.fromRGBO(
+                            (v * 255).round(),
+                            picked.g.round().clamp(0, 255),
+                            picked.b.round().clamp(0, 255),
+                            picked.a,
+                          );
+                          setDialogState(() {});
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Slider(
+                        value: picked.g / 255,
+                        min: 0,
+                        max: 1,
+                        onChanged: (v) {
+                          picked = Color.fromRGBO(
+                            picked.r.round().clamp(0, 255),
+                            (v * 255).round(),
+                            picked.b.round().clamp(0, 255),
+                            picked.a,
+                          );
+                          setDialogState(() {});
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Slider(
+                        value: picked.b / 255,
+                        min: 0,
+                        max: 1,
+                        onChanged: (v) {
+                          picked = Color.fromRGBO(
+                            picked.r.round().clamp(0, 255),
+                            picked.g.round().clamp(0, 255),
+                            (v * 255).round(),
+                            picked.a,
+                          );
+                          setDialogState(() {});
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, picked),
+              child: const Text('Select'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -199,13 +304,7 @@ IconButton(
             tooltip: 'Pick color',
             icon: Icon(Icons.color_lens, color: _color),
             onPressed: () async {
-              final picked = await pickColor(
-                context: context,
-                color: _color,
-                enableAlpha: false,
-                enableShades: true,
-                maxColors: 12,
-              );
+              final picked = await _pickColorDialog(context, _color);
               if (picked != null && mounted) {
                 setState(() => _color = picked);
               }

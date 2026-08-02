@@ -34,13 +34,7 @@ dependencies:
   uuid: ^4.4.2
   collection: ^1.18.0
   shared_preferences: ^2.3.2
-
-  # Color picker
-  flex_color_picker: ^4.1.0
-
-  # Markdown rendering
-  flutter_markdown_plus: ^0.2.0
-  markdown: ^4.0.0
+  flutter_markdown: ^0.7.7+1
 
 dev_dependencies:
   flutter_test:

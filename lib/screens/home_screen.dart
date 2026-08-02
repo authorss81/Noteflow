@@ -162,7 +162,11 @@ class _HomeScreenState extends State<HomeScreen> {
           final (image, pageIndex) = pages[i];
           // Save the rendered page as a PNG file so it persists independently.
           final pageFileName = '${f.name}_page_${pageIndex + 1}.png';
-          final pagePath = await import.persistFile(pageFileName, await image.toByteData(format: ui.ImageByteFormat.png)!.buffer.asUint8List());
+          final pngBytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final pagePath = await import.persistFile(
+            pageFileName,
+            pngBytes!.buffer.asUint8List(),
+          );
           final pageTitle = pages.length == 1
               ? f.name
               : '${f.name} (page ${pageIndex + 1})';

@@ -259,19 +259,11 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // ---- Page-Tag junction ----
-  Future<List<Tag>> tagsForPage(String pageId) async {
-    final rows = await (select(pageTags)
-          ..where((t) => t.pageId.equals(pageId))
-          ..join([innerJoin(tags, tags.id.equalsExp(pageTags.tagId))]))
-        .get();
-    return rows.map((r) => r.readTable(tags)).toList();
-  }
-
   Future<void> addTagToPage(String pageId, String tagId) =>
-      into(pageTags).insertOnConflictUpdate(PageTagsCompanion.insert(
-        id: _id(),
-        pageId: pageId,
-        tagId: tagId,
+      into(pageTags).insertOnConflictUpdate(PageTagsCompanion(
+        id: Value(DateTime.now().microsecondsSinceEpoch.toRadixString(36)),
+        pageId: Value(pageId),
+        tagId: Value(tagId),
       ));
 
   Future<void> removeTagFromPage(String pageId, String tagId) =>
@@ -279,11 +271,8 @@ class AppDatabase extends _$AppDatabase {
             ..where((t) => t.pageId.equals(pageId) & t.tagId.equals(tagId)))
           .go();
 
-  Future<List<NotePage>> pagesByTag(String tagId) async {
-    final rows = await (select(pageTags)
-          ..where((t) => t.tagId.equals(tagId))
-          ..join([innerJoin(pages, pages.id.equalsExp(pageTags.pageId))]))
-        .get();
-    return rows.map((r) => _pageFromRow(r.readTable(pages))).toList();
-  }
+  Future<List<String>> tagIdsForPage(String pageId) =>
+      (select(pageTags)..where((t) => t.pageId.equals(pageId)))
+          .map((r) => r.tagId)
+          .get();
 }
