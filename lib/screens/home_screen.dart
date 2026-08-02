@@ -1,4 +1,10 @@
+import 'dart:io';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:archive/archive_io.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -248,11 +254,226 @@ class _HomeScreenState extends State<HomeScreen> {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Noteflow'),
-          actions: [_ThemeMenu(app: app)],
+          actions: [
+            _ThemeMenu(app: app),
+            _MaintenanceMenu(app: app),
+          ],
         ),
         body: _MobileHome(app: app, onImport: () => _importFiles(context, app)),
       );
     });
+  }
+}
+
+class _MaintenanceMenu extends StatelessWidget {
+  const _MaintenanceMenu({required this.app});
+  final AppState app;
+
+  Future<File?> _findDatabaseFile() async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final supportDir = await getApplicationSupportDirectory();
+      final paths = [
+        '${docDir.path}/noteflow.sqlite',
+        '${supportDir.path}/noteflow.sqlite',
+      ];
+      for (final path in paths) {
+        final file = File(path);
+        if (await file.exists()) {
+          return file;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _exportBackup(BuildContext context) async {
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Backup is not supported in the web version.')),
+      );
+      return;
+    }
+    try {
+      final dbFile = await _findDatabaseFile();
+      if (dbFile == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Database file not found.')),
+          );
+        }
+        return;
+      }
+
+      final docs = await getApplicationDocumentsDirectory();
+      final importsDir = Directory('${docs.path}${Platform.pathSeparator}noteflow${Platform.pathSeparator}imports');
+
+      final tempDir = await getTemporaryDirectory();
+      final zipPath = '${tempDir.path}/noteflow_backup_${DateTime.now().millisecondsSinceEpoch}.noteflow';
+
+      final encoder = ZipFileEncoder();
+      encoder.create(zipPath);
+      encoder.addFile(dbFile, 'noteflow.sqlite');
+      if (await importsDir.exists()) {
+        await encoder.addDirectory(importsDir);
+      }
+      encoder.close();
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(zipPath)],
+          subject: 'Noteflow Backup',
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Backup failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importBackup(BuildContext context) async {
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Restore is not supported in the web version.')),
+      );
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Restore'),
+        content: const Text(
+          'WARNING: Restoring a backup will overwrite and permanently delete all your current notebooks, notes, and imported documents. This action cannot be undone.\n\nAre you sure you want to proceed?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Confirm Restore'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['noteflow', 'zip'],
+      );
+
+      if (result == null || result.files.single.path == null) return;
+      final backupPath = result.files.single.path!;
+
+      final dbFile = await _findDatabaseFile();
+      if (dbFile == null) {
+        throw StateError('Cannot locate target database file path.');
+      }
+
+      // Close connection
+      await app.repo.closeDatabase();
+
+      // Extract backup
+      final bytes = await File(backupPath).readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      final docs = await getApplicationDocumentsDirectory();
+      final importsDir = Directory('${docs.path}${Platform.pathSeparator}noteflow${Platform.pathSeparator}imports');
+      if (await importsDir.exists()) {
+        await importsDir.delete(recursive: true);
+      }
+      await importsDir.create(recursive: true);
+
+      for (final file in archive) {
+        final filename = file.name;
+        if (file.isFile) {
+          final data = file.content as List<int>;
+          if (filename == 'noteflow.sqlite') {
+            await File(dbFile.path).writeAsBytes(data, flush: true);
+          } else if (filename.startsWith('imports/')) {
+            final relativePath = filename.substring('imports/'.length);
+            final targetPath = '${importsDir.path}${Platform.pathSeparator}$relativePath';
+            final targetFile = File(targetPath);
+            await targetFile.create(recursive: true);
+            await targetFile.writeAsBytes(data, flush: true);
+          }
+        }
+      }
+
+      if (context.mounted) {
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Restore Completed'),
+            content: const Text(
+              'Database and imports have been restored successfully. The application will now close to reload the new database files.',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => exit(0),
+                child: const Text('Close App'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Restore failed: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.settings_backup_restore),
+      tooltip: 'Backup / Restore',
+      onSelected: (val) {
+        if (val == 'backup') {
+          _exportBackup(context);
+        } else if (val == 'restore') {
+          _importBackup(context);
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'backup',
+          child: Row(
+            children: [
+              Icon(Icons.backup_outlined),
+              SizedBox(width: 8),
+              Text('Backup to file'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'restore',
+          child: Row(
+            children: [
+              Icon(Icons.restore_outlined),
+              SizedBox(width: 8),
+              Text('Restore from file'),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -321,6 +542,7 @@ class _NotebookPanel extends StatelessWidget {
                       }),
                 ),
                 _ThemeMenu(app: app),
+                _MaintenanceMenu(app: app),
               ],
             ),
           ),

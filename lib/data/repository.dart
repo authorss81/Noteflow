@@ -13,6 +13,8 @@ class NoteRepository {
   final AppDatabase _db;
   NoteRepository(this._db);
 
+  Future<void> closeDatabase() => _db.close();
+
   // ---- Notebooks / Sections ----
   Future<List<Notebook>> notebooks() async {
     final rows = await _db.allNotebooks();

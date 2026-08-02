@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -43,6 +44,7 @@ class _EditorScreenState extends State<EditorScreen> {
   List<Stroke> _strokes = [];
   ui.Image? _background;
   bool _loadingBg = false;
+  bool _previewMarkdown = false;
   AppLifecycleListener? _lifecycle;
 
   @override
@@ -195,6 +197,29 @@ class _EditorScreenState extends State<EditorScreen> {
         subject: 'Exported Page: ${_page.title}',
       ),
     );
+  }
+
+  String _compileMarkdown() {
+    final textStrokes = _strokes
+        .where((s) => s.tool == StrokeTool.text && s.text.trim().isNotEmpty)
+        .toList();
+    // Sort top-to-bottom, then left-to-right
+    textStrokes.sort((a, b) {
+      final ay = a.start?.dy ?? (a.points.isNotEmpty ? a.points.first.dy : 0.0);
+      final by = b.start?.dy ?? (b.points.isNotEmpty ? b.points.first.dy : 0.0);
+      if ((ay - by).abs() > 20) {
+        return ay.compareTo(by);
+      }
+      final ax = a.start?.dx ?? (a.points.isNotEmpty ? a.points.first.dx : 0.0);
+      final bx = b.start?.dx ?? (b.points.isNotEmpty ? b.points.first.dx : 0.0);
+      return ax.compareTo(bx);
+    });
+
+    if (textStrokes.isEmpty) {
+      return '*No text annotations on this page. Add some text elements to see them rendered in Markdown.*';
+    }
+
+    return textStrokes.map((s) => s.text).join('\n\n');
   }
 
 String _formatTime(DateTime t) =>
@@ -414,6 +439,11 @@ IconButton(
               );
             },
           ),
+          IconButton(
+            tooltip: _previewMarkdown ? 'Edit canvas' : 'Preview markdown',
+            icon: Icon(_previewMarkdown ? Icons.edit : Icons.menu_book),
+            onPressed: () => setState(() => _previewMarkdown = !_previewMarkdown),
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.share),
             tooltip: 'Export & Share',
@@ -440,8 +470,21 @@ IconButton(
       ),
       body: _loadingBg
           ? const Center(child: CircularProgressIndicator())
-          : _EditorBody(
-              canvasKey: _canvasKey,
+          : _previewMarkdown
+              ? Container(
+                  color: Theme.of(context).colorScheme.surface,
+                  width: double.infinity,
+                  height: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  child: SingleChildScrollView(
+                    child: MarkdownBody(
+                      data: _compileMarkdown(),
+                      selectable: true,
+                    ),
+                  ),
+                )
+              : _EditorBody(
+                  canvasKey: _canvasKey,
               boundaryKey: _boundaryKey,
               tool: _tool,
               color: _color,
