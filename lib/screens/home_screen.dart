@@ -16,9 +16,10 @@ class HomeScreen extends StatelessWidget {
     if (files.isEmpty) return;
     for (final f in files) {
       final ext = import.extensionOf(f.name);
+      final path = await import.persistFile(f.name, f.bytes);
       await app.addPage(
         title: f.name,
-        sourceFilePath: null, // placeholder; MVP stores name only
+        sourceFilePath: path,
         sourceFileType: import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text',
       );
     }

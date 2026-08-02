@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import 'database.dart' hide Notebook, Section;
 import '../models/note_models.dart';
 import '../models/stroke.dart';
+import '../services/import_service.dart';
 
 /// High-level access to notes data, abstracting the database.
 class NoteRepository {
@@ -189,6 +190,14 @@ class NoteRepository {
       ));
 
   Future<void> deleteNotebook(String id) => _db.deleteNotebook(id);
+
+  /// Permanently deletes a page, also removing its imported source file.
+  Future<void> deletePage(String id, {String? sourceFilePath}) async {
+    await _db.deletePage(id);
+    if (sourceFilePath != null) {
+      await ImportService().deleteStoredFile(sourceFilePath);
+    }
+  }
 
   String _id() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 }

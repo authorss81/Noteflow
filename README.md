@@ -15,18 +15,18 @@ Offline-first, privacy-focused note-taking app. **Import files as a canvas, anno
 
 | Feature | Status |
 |---|---|
-| Import files (PDF / images / text) | ✅ via system picker (SAF on Android) |
+| Import files (PDF / images / text) | ✅ via system picker (SAF on Android); bytes persisted to app storage |
 | Annotation canvas (infinite, pan/zoom) | ✅ pen, highlighter, eraser, text, rect, line, arrow, ellipse |
 | Pressure-sensitive pen | ✅ via pointer velocity (full 4096 S Pen pressure = later) |
-| Undo / Redo | ✅ |
-| Autosave (400ms debounce + on-close) | ✅ drift/SQLite |
-| Version history (auto every 2 min + manual) | ✅ restore from snapshots |
+| Undo / Redo | ⚠️ partially done — eraser/text push duplicate undo frames (P0-3) |
+| Autosave (400ms debounce + on-close) | ⚠️ partially done — final flush on back/kill still fragile (P0-6) |
+| Version history (auto every 2 min + manual) | ⚠️ partially done — restore is irreversible, no preview (P0-7, P2) |
 | Notebooks → Sections → Pages | ✅ OneNote-style 3-pane |
-| Pin / rename / trash pages | ✅ |
+| Pin / rename / trash pages | ⚠️ partially done — no trash/restore UI, no notebook/section rename in UI |
 | Themes: Light / Sepia / Dark / AMOLED | ✅ warm paper palettes (M3) |
 | 3-pane desktop + tabbed mobile layout | ✅ |
 | Encryption-ready security layer | ⚠️ primitives ready, vault opt-in later |
-| PDF annotation rendering | ⚠️ MVP shows image background; PDF page rendering next |
+| PDF annotation rendering | ⚠️ MVP shows image background; PDF page rendering next (P0-4) |
 | Online sync (Automerge CRDT + Rust axum) | 🔜 later milestone |
 | E2E encryption + OCR search | 🔜 later milestone |
 
@@ -98,6 +98,57 @@ Threat model: lost/stolen device, cloned backups. Not defending against rooted m
 
 ## Roadmap
 
-- **M2**: real PDF page rendering + annotation overlay, tags, trash/restore UI, search, tablet stylus (S Pen pressure, palm rejection)
-- **M3**: E2E encrypted sync via Automerge + self-hosted Rust (axum) backend
-- **M4**: on-device OCR search, collaboration, export PDF/image/Markdown
+### Phase P0 — "Make it actually work" (fix critical bugs first) — partially done (6 remaining: P0-2, P0-3, P0-4, P0-5, P0-6, P0-7)
+
+| # | Task | Status |
+|---|---|---|
+| P0-1 | Persist imported files to app storage; real `sourceFilePath` | ✅ done |
+| P0-2 | Canvas coordinates: drop double inverse-transform; zoom accumulates + zooms to center | ⏳ |
+| P0-3 | Eraser/text undo bug: remove duplicate commit frames | ⏳ |
+| P0-4 | Wire PDF (`pdfrx`) to render page 1 as background, or reject at import | ⏳ |
+| P0-5 | Text import: `utf8.decode(bytes)` → text strokes/layer | ⏳ |
+| P0-6 | Safe save on exit: flush in `PopScope` + `AppLifecycleListener` | ⏳ |
+| P0-7 | Snapshot before restore in version sheet (restore is irreversible) | ⏳ |
+
+### Phase P1 — "Usable day-to-day" — pending (all 10)
+
+| # | Task |
+|---|---|
+| P1-1 | Full CRUD UI: rename/delete notebooks & sections (popup menus) |
+| P1-2 | Trash view with restore + empty trash (deletion is currently a one-way door) |
+| P1-3 | Import → auto-open editor after import |
+| P1-4 | In-place page title editing in editor AppBar |
+| P1-5 | Search titles (SQL LIKE) + recent pages |
+| P1-6 | Autosave status: real "saved at HH:MM" indicator |
+| P1-7 | Editor theme switch (not just home screen) |
+| P1-8 | Restore confirmation dialog in version sheet |
+| P1-9 | Empty states + first-run welcome |
+| P1-10 | Guard `attach()` with `mounted`; fix `renamePage`/`togglePin` stale state; wrap deletes in transactions; session restore from settings |
+
+### Phase P2 — "Feels like a real annotation app" — pending (all 8)
+
+| # | Task |
+|---|---|
+| P2-1 | Stylus support: raw `Listener` (latency), real pointer pressure, side-button eraser, palm rejection, isolated stroke layer |
+| P2-2 | Performance on weak hardware: downsample images (~2048px cap), cached background, stroke decimation, gzip strokes, undo cap |
+| P2-3 | Export annotated page as PNG/PDF + share |
+| P2-4 | Phone toolbar: bottom sheet (tools/colors/width), custom color picker + recent colors, stroke presets |
+| P2-5 | Page switching inside editor (swipe + page sheet) |
+| P2-6 | Version previews (snapshot thumbnails) + named checkpoints |
+| P2-7 | Fullscreen/focus drawing mode + wakelock |
+| P2-8 | Tablet: 2-pane (list + editor), panel resize |
+
+### Phase P3 — "Data safety & multi-device" — pending (all 5)
+
+Order matters: backup → encryption → auth → sync.
+
+| # | Task |
+|---|---|
+| P3-1 | Backup/export: `.noteflow` ZIP (manifest + 5 tables JSON + files/); restore; Android Auto Backup rules |
+| P3-2 | Encryption at rest: PBKDF2 → KEK → DEK in secure storage; encrypt strokes + files; migration pass |
+| P3-3 | Auth: email+password, argon2id, JWT refresh in secure storage, device trust list |
+| P3-4 | LWW JSON sync v1: axum server (auth + `GET/POST /v1/sync` cursor), client outbox + pull, per-page LWW |
+| P3-5 | Automerge upgrade via `dart_automerge` FFI (defer until real concurrent editing) |
+
+### Deferred (explicitly)
+Cloud OCR · web collaborative editing · iOS · SQLCipher full-DB encryption · custom Rust via `flutter_rust_bridge` · passphrase-recovery
