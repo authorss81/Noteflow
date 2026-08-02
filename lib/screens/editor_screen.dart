@@ -129,7 +129,8 @@ class _EditorScreenState extends State<EditorScreen> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: scheme.surface,
-      appBar: AppBar(
+appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -157,7 +158,12 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           ],
         ),
-        actions: [
+actions: [
+          IconButton(
+            tooltip: 'Back',
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context),
+          ),
           IconButton(
             tooltip: 'Undo',
             icon: const Icon(Icons.undo),

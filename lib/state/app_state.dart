@@ -211,6 +211,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> emptyTrash() async {
     await _repo.emptyTrash();
+    await _reloadTree();
   }
 
   Future<void> renameNotebook(String id, String name) async {
