@@ -11,6 +11,7 @@ class SettingsService {
   static const _notebookKey = 'active_notebook';
   static const _sectionKey = 'active_section';
   static const _pageKey = 'active_page';
+  static const _firstRunKey = 'first_run_complete';
 
   String get themeMode => _prefs.getString(_themeKey) ?? 'light';
   set themeMode(String v) {
@@ -42,5 +43,11 @@ class SettingsService {
     } else {
       _prefs.setString(_pageKey, v);
     }
+  }
+
+  bool get isFirstRun => !(_prefs.getBool(_firstRunKey) ?? false);
+
+  Future<void> markFirstRunComplete() async {
+    await _prefs.setBool(_firstRunKey, true);
   }
 }

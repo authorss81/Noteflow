@@ -22,7 +22,7 @@ Offline-first, privacy-focused note-taking app. **Import files as a canvas, anno
 | Autosave (400ms debounce + on-close) | ✅ drift/SQLite; flush on pause/exit |
 | Version history (auto every 2 min + manual) | ✅ restore from snapshots (pre-restore backup added) |
 | Notebooks → Sections → Pages | ✅ OneNote-style 3-pane |
-| Pin / rename / trash pages | ⚠️ partially done — no trash/restore UI, no notebook/section rename in UI |
+| Pin / rename / trash pages | ✅ full CRUD + trash view with restore/empty-trash |
 | Themes: Light / Sepia / Dark / AMOLED | ✅ warm paper palettes (M3) |
 | 3-pane desktop + tabbed mobile layout | ✅ |
 | Encryption-ready security layer | ⚠️ primitives ready, vault opt-in later |
@@ -110,20 +110,20 @@ Threat model: lost/stolen device, cloned backups. Not defending against rooted m
 | P0-6 | Safe save on exit: flush in `PopScope` + `AppLifecycleListener` | ✅ done (lifecycle flush on pause/exit) |
 | P0-7 | Snapshot before restore in version sheet (restore is irreversible) | ✅ done |
 
-### Phase P1 — "Usable day-to-day" — pending (all 10)
+### Phase P1 — "Usable day-to-day" — ✅ done (all 10)
 
 | # | Task |
 |---|---|
-| P1-1 | Full CRUD UI: rename/delete notebooks & sections (popup menus) |
-| P1-2 | Trash view with restore + empty trash (deletion is currently a one-way door) |
-| P1-3 | Import → auto-open editor after import |
-| P1-4 | In-place page title editing in editor AppBar |
-| P1-5 | Search titles (SQL LIKE) + recent pages |
-| P1-6 | Autosave status: real "saved at HH:MM" indicator |
-| P1-7 | Editor theme switch (not just home screen) |
-| P1-8 | Restore confirmation dialog in version sheet |
-| P1-9 | Empty states + first-run welcome |
-| P1-10 | Guard `attach()` with `mounted`; fix `renamePage`/`togglePin` stale state; wrap deletes in transactions; session restore from settings |
+| P1-1 | Full CRUD UI: rename/delete notebooks & sections (popup menus) | ✅ done |
+| P1-2 | Trash view with restore + empty trash (deletion is currently a one-way door) | ✅ done |
+| P1-3 | Import → auto-open editor after import | ✅ done |
+| P1-4 | In-place page title editing in editor AppBar | ✅ done |
+| P1-5 | Search titles (SQL LIKE) + recent pages | ✅ done |
+| P1-6 | Autosave status: real "saved at HH:MM" indicator | ✅ done |
+| P1-7 | Editor theme switch (not just home screen) | ✅ done |
+| P1-8 | Restore confirmation dialog in version sheet | ✅ done |
+| P1-9 | Empty states + first-run welcome | ✅ done |
+| P1-10 | Guard `attach()` with `mounted`; fix `renamePage`/`togglePin` stale state; wrap deletes in transactions; session restore from settings | ✅ done |
 
 ### Phase P2 — "Feels like a real annotation app" — pending (all 8)
 

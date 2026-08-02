@@ -16,6 +16,7 @@ class AppState extends ChangeNotifier {
   final AutosaveService _autosave;
   AutosaveService get autosave => _autosave;
   NoteRepository get repo => _repo;
+  SettingsService get settings => _settings;
 
   AppThemeMode _theme = AppThemeMode.light;
   AppThemeMode get theme => _theme;
@@ -38,6 +39,31 @@ class AppState extends ChangeNotifier {
   Section? get section => _section;
   NotePage? get page => _page;
 
+  List<NotePage> _trashed = [];
+  List<NotePage> _recent = [];
+  List<NotePage> get trashed => _trashed;
+  List<NotePage> get recent => _recent;
+
+  Future<void> loadTrash() async {
+    _trashed = await _repo.trashedPages();
+    notifyListeners();
+  }
+
+  Future<List<NotePage>> searchPages(String query) async =>
+      _repo.searchPages(query);
+
+  Future<void> loadRecent() async {
+    final all = <NotePage>[];
+    for (final nb in _notebooks) {
+      for (final s in await _repo.sections(nb.id)) {
+        all.addAll(await _repo.pages(s.id));
+      }
+    }
+    all.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    _recent = all.take(20).toList();
+    notifyListeners();
+  }
+
   void initTheme() {
     _theme = AppThemeMode.values.firstWhere(
       (m) => m.name == _settings.themeMode,
@@ -57,6 +83,12 @@ class AppState extends ChangeNotifier {
     _notebook = await _repo.ensureDefaultNotebook();
     _section = await _repo.ensureDefaultSection(_notebook!.id);
     await _reloadTree(selectNotebook: _notebook!.id, selectSection: _section!.id);
+    // Restore last session position if valid.
+    final lastNb = _settings.activeNotebookId;
+    final lastSec = _settings.activeSectionId;
+    if (lastNb != null && _notebooks.any((n) => n.id == lastNb)) {
+      await _reloadTree(selectNotebook: lastNb, selectSection: lastSec);
+    }
     _loaded = true;
     notifyListeners();
   }
@@ -133,9 +165,12 @@ class AppState extends ChangeNotifier {
   }
 
   Future<NotePage> addPage({String? title, String? sourceFilePath, String? sourceFileType}) async {
-    if (_section == null) return _page!;
+    final section = _section ?? (_sections.isNotEmpty ? _sections.first : null);
+    if (section == null) {
+      throw StateError('No section selected');
+    }
     final p = await _repo.createPage(
-      sectionId: _section!.id,
+      sectionId: section.id,
       title: title ?? 'Untitled',
       sourceFilePath: sourceFilePath,
       sourceFileType: sourceFileType,
@@ -147,11 +182,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> renamePage(String id, String title) async {
     await _repo.renamePage(id, title);
+    if (_page?.id == id) _page = await _repo.page(id);
     await _reloadTree();
   }
 
   Future<void> togglePin(String id) async {
-    final target = _pages.firstWhere((p) => p.id == id);
+    final target = _pages.where((p) => p.id == id).firstOrNull;
+    if (target == null) return;
     await _repo.togglePin(id, !target.pinned);
     await _reloadTree();
   }
@@ -159,6 +196,56 @@ class AppState extends ChangeNotifier {
   Future<void> trashPage(String id) async {
     await _repo.trashPage(id);
     await _reloadTree();
+  }
+
+  Future<void> restorePage(String id) async {
+    await _repo.restorePage(id);
+    await _reloadTree();
+  }
+
+  Future<void> deletePage(String id) async {
+    final p = await _repo.page(id);
+    await _repo.deletePage(id, sourceFilePath: p?.sourceFilePath);
+    await _reloadTree();
+  }
+
+  Future<void> emptyTrash() async {
+    await _repo.emptyTrash();
+  }
+
+  Future<void> renameNotebook(String id, String name) async {
+    await _repo.renameNotebook(id, name);
+    await _reloadTree();
+  }
+
+  Future<void> deleteNotebook(String id) async {
+    final wasActive = _notebook?.id == id;
+    await _repo.deleteNotebook(id);
+    if (wasActive) {
+      _notebook = null;
+      _section = null;
+      _page = null;
+      await _reloadTree();
+    } else {
+      await _reloadTree();
+    }
+  }
+
+  Future<void> renameSection(String id, String name) async {
+    await _repo.renameSection(id, name);
+    await _reloadTree();
+  }
+
+  Future<void> deleteSection(String id) async {
+    final wasActive = _section?.id == id;
+    await _repo.deleteSection(id);
+    if (wasActive) {
+      _section = null;
+      _page = null;
+      await _reloadTree();
+    } else {
+      await _reloadTree();
+    }
   }
 
   String _uuid() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);

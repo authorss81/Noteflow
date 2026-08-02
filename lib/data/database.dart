@@ -95,13 +95,15 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> deleteNotebook(String id) async {
     // Cascade delete sections -> pages -> content/versions manually (FK may be off in SQLite).
-    final secRows = await (select(sections)
-          ..where((t) => t.notebookId.equals(id)))
-        .get();
-    for (final s in secRows) {
-      await deleteSection(s.id);
-    }
-    await (delete(notebooks)..where((t) => t.id.equals(id))).go();
+    await transaction(() async {
+      final secRows = await (select(sections)
+            ..where((t) => t.notebookId.equals(id)))
+          .get();
+      for (final s in secRows) {
+        await deleteSection(s.id);
+      }
+      await (delete(notebooks)..where((t) => t.id.equals(id))).go();
+    });
   }
 
   // ---- Sections ----
@@ -117,13 +119,15 @@ class AppDatabase extends _$AppDatabase {
           .write(SectionsCompanion(name: Value(name)));
 
   Future<void> deleteSection(String id) async {
-    final pageRows = await (select(pages)
-          ..where((t) => t.sectionId.equals(id)))
-        .get();
-    for (final p in pageRows) {
-      await deletePage(p.id);
-    }
-    await (delete(sections)..where((t) => t.id.equals(id))).go();
+    await transaction(() async {
+      final pageRows = await (select(pages)
+            ..where((t) => t.sectionId.equals(id)))
+          .get();
+      for (final p in pageRows) {
+        await deletePage(p.id);
+      }
+      await (delete(sections)..where((t) => t.id.equals(id))).go();
+    });
   }
 
   // ---- Pages ----
@@ -138,6 +142,17 @@ class AppDatabase extends _$AppDatabase {
   Future<Page?> pageById(String id) =>
       (select(pages)..where((t) => t.id.equals(id))).getSingleOrNull();
 
+  Future<List<Page>> trashedPages() =>
+      (select(pages)..where((t) => t.deleted.equals(true))).get();
+
+  Future<List<Page>> searchPages(String query) {
+    final like = '%${query.toLowerCase()}%';
+    return (select(pages)
+          ..where((t) =>
+              t.deleted.equals(false) & t.title.lower().like(like)))
+        .get();
+  }
+
   Future<void> insertPage(PagesCompanion p) => into(pages).insertOnConflictUpdate(p);
 
   Future<void> touchPage(String id) =>
@@ -151,6 +166,10 @@ class AppDatabase extends _$AppDatabase {
   Future<void> softDeletePage(String id) =>
       (update(pages)..where((t) => t.id.equals(id)))
           .write(const PagesCompanion(deleted: Value(true)));
+
+  Future<void> restorePage(String id) =>
+      (update(pages)..where((t) => t.id.equals(id)))
+          .write(const PagesCompanion(deleted: Value(false)));
 
   Future<void> deletePage(String id) async {
     await (delete(pageContent)..where((t) => t.pageId.equals(id))).go();

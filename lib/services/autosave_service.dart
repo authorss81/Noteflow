@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import '../data/repository.dart';
 import '../models/stroke.dart';
@@ -10,7 +11,7 @@ import '../models/stroke.dart';
 ///  - Take a version snapshot every 2 minutes of inactivity, plus a manual
 ///    snapshot on page close.
 ///  - Keep the last 100 versions per page (pruned in the DB layer).
-class AutosaveService {
+class AutosaveService extends ChangeNotifier {
   AutosaveService(this._repo);
 
   final NoteRepository _repo;
@@ -21,11 +22,18 @@ class AutosaveService {
   String? _activePageId;
   bool _dirty = false;
   int _snapshotCount = 0;
+  DateTime? _lastSavedAt;
+  bool _saving = false;
+
+  DateTime? get lastSavedAt => _lastSavedAt;
+  bool get saving => _saving;
 
   void attach(String pageId) {
     detach();
     _activePageId = pageId;
     _snapshotCount = 0;
+    _lastSavedAt = null;
+    _saving = false;
     _snapshotTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       if (_dirty) {
         _takeSnapshot(auto: true);
@@ -38,11 +46,18 @@ class AutosaveService {
   void scheduleSave(List<Stroke> strokes) {
     if (_activePageId == null) return;
     _dirty = true;
+    if (!_saving) {
+      _saving = true;
+      notifyListeners();
+    }
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 400), () async {
       if (_activePageId == null) return;
       await _repo.saveStrokes(_activePageId!, strokes);
+      _lastSavedAt = DateTime.now();
       _dirty = false;
+      _saving = false;
+      notifyListeners();
     });
   }
 
@@ -56,6 +71,10 @@ class AutosaveService {
     _snapshotCount++;
     final autoLabel = auto ? 'Auto #$_snapshotCount' : label;
     await _repo.snapshot(_activePageId!, _repo.encodeStrokes(current), label: autoLabel);
+    if (auto) {
+      _lastSavedAt = DateTime.now();
+      notifyListeners();
+    }
   }
 
   /// Flush pending saves + take a final snapshot. Call on page close.
@@ -73,5 +92,6 @@ class AutosaveService {
     _snapshotTimer?.cancel();
     _activePageId = null;
     _dirty = false;
+    _saving = false;
   }
 }

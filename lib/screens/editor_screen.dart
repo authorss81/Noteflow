@@ -1,12 +1,15 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../data/database.dart';
 import '../models/note_models.dart';
 import '../models/stroke.dart';
 import '../services/autosave_service.dart';
 import '../services/import_service.dart';
+import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 import '../widgets/annotation_canvas.dart';
 
 /// The annotation editor: page canvas + toolbar + version history.
@@ -28,6 +31,7 @@ class _EditorScreenState extends State<EditorScreen> {
   Color _color = const Color(0xFF1B365D); // ink-blue default
   double _width = 3;
 
+  late NotePage _page;
   List<Stroke> _strokes = [];
   ui.Image? _background;
   bool _loadingBg = false;
@@ -36,6 +40,7 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void initState() {
     super.initState();
+    _page = widget.page;
     _loadPage();
     _lifecycle = AppLifecycleListener(
       onStateChange: (state) {
@@ -48,20 +53,31 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
+  @override
+  void didUpdateWidget(EditorScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page.id != widget.page.id) {
+      _page = widget.page;
+      _loadPage();
+    } else if (oldWidget.page.title != widget.page.title) {
+      _page = _page.copyWith(title: widget.page.title);
+    }
+  }
+
   Future<void> _loadPage() async {
     if (!mounted) return;
     setState(() => _loadingBg = true);
-    final strokes = await widget.autosave.repo.strokesFor(widget.page.id);
+    final strokes = await widget.autosave.repo.strokesFor(_page.id);
     if (!mounted) return;
     _strokes = strokes;
 
-    final src = widget.page.sourceFilePath;
+    final src = _page.sourceFilePath;
     if (src != null) {
-      final f = await _import.loadBackground(src, widget.page.sourceFileType ?? 'image');
+      final f = await _import.loadBackground(src, _page.sourceFileType ?? 'image');
       if (mounted) setState(() => _background = f);
     }
     if (mounted) setState(() => _loadingBg = false);
-    widget.autosave.attach(widget.page.id);
+    widget.autosave.attach(_page.id);
   }
 
   @override
@@ -78,6 +94,36 @@ class _EditorScreenState extends State<EditorScreen> {
     widget.autosave.scheduleSave(s);
   }
 
+  void _renamePage() {
+    final controller = TextEditingController(text: _page.title);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename page'),
+        content: TextField(controller: controller, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) {
+                context.read<AppState>().renamePage(_page.id, name);
+                setState(() {
+                  _page = _page.copyWith(title: name);
+                });
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -87,10 +133,27 @@ class _EditorScreenState extends State<EditorScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.page.title, style: const TextStyle(fontSize: 18)),
-            Text(
-              _loadingBg ? 'Loading…' : 'Autosaved',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            InkWell(
+              onTap: _renamePage,
+              child: Text(_page.title,
+                  style: const TextStyle(fontSize: 18)),
+            ),
+            ListenableBuilder(
+              listenable: widget.autosave,
+              builder: (context, _) {
+                final saving = widget.autosave.saving;
+                final lastSavedAt = widget.autosave.lastSavedAt;
+                return Text(
+                  _loadingBg
+                      ? 'Loading…'
+                      : (saving
+                          ? 'Saving…'
+                          : lastSavedAt != null
+                              ? 'Saved ${_formatTime(lastSavedAt)}'
+                              : 'Autosaved'),
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                );
+              },
             ),
           ],
         ),
@@ -125,6 +188,7 @@ class _EditorScreenState extends State<EditorScreen> {
             icon: const Icon(Icons.history),
             onPressed: _showVersions,
           ),
+          _EditorThemeMenu(),
           PopupMenuButton<StrokeTool>(
             onSelected: (t) => setState(() => _tool = t),
             itemBuilder: (_) => StrokeTool.values
@@ -151,7 +215,7 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _showVersions() async {
-    final versions = await widget.autosave.repo.versions(widget.page.id);
+    final versions = await widget.autosave.repo.versions(_page.id);
     if (!mounted) return;
     if (versions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -178,6 +242,43 @@ class _EditorScreenState extends State<EditorScreen> {
       ),
     );
   }
+}
+
+// ---------- Theme menu (also available inside the editor) ----------
+class _EditorThemeMenu extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    return PopupMenuButton<AppThemeMode>(
+      icon: const Icon(Icons.palette_outlined),
+      tooltip: 'Theme',
+      onSelected: app.setTheme,
+      itemBuilder: (_) => [
+        for (final m in AppThemeMode.values)
+          PopupMenuItem(
+            value: m,
+            child: Row(
+              children: [
+                Icon(
+                  m == app.theme ? Icons.check : Icons.circle_outlined,
+                  size: 16,
+                  color: PaperPalette.of(m).accent,
+                ),
+                const SizedBox(width: 8),
+                Text(_label(m)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _label(AppThemeMode m) => switch (m) {
+        AppThemeMode.light => 'Light (paper)',
+        AppThemeMode.sepia => 'Sepia',
+        AppThemeMode.dark => 'Dark',
+        AppThemeMode.amoled => 'AMOLED black',
+      };
 }
 
 class _EditorBody extends StatelessWidget {
@@ -370,6 +471,24 @@ class _VersionsSheetState extends State<_VersionsSheet> {
     setState(() {});
   }
 
+  Future<bool?> _confirmRestore(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restore this version?'),
+        content: const Text(
+            'Your current strokes will be saved as a backup version first.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
@@ -403,7 +522,10 @@ class _VersionsSheetState extends State<_VersionsSheet> {
                     title: Text(v.label.isEmpty ? 'Snapshot' : v.label),
                     subtitle: Text('${v.createdAt.toLocal()}'),
                     trailing: FilledButton.tonal(
-                      onPressed: () {
+                      onPressed: () async {
+                        final confirmed = await _confirmRestore(context);
+                        if (confirmed != true) return;
+                        if (!context.mounted) return;
                         final s =
                             widget.autosave.repo.decodeStrokes(v.strokesJson);
                         widget.onRestore(s);

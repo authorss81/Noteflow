@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import 'database.dart' hide Notebook, Section;
+import 'database.dart' as drift;
 import '../models/note_models.dart';
 import '../models/stroke.dart';
 import '../services/import_service.dart';
@@ -65,20 +66,7 @@ class NoteRepository {
   // ---- Pages ----
   Future<List<NotePage>> pages(String sectionId) async {
     final rows = await _db.pagesFor(sectionId);
-    return rows
-        .map((p) => NotePage(
-              id: p.id,
-              sectionId: p.sectionId,
-              title: p.title,
-              sourceFilePath: p.sourceFilePath,
-              sourceFileType: p.sourceFileType,
-              pageIndex: p.pageIndex,
-              createdAt: p.createdAt,
-              updatedAt: p.updatedAt,
-              pinned: p.pinned,
-              deleted: p.deleted,
-            ))
-        .toList();
+    return rows.map(_pageFromRow).toList();
   }
 
   Future<NotePage> createPage({
@@ -114,19 +102,7 @@ class NoteRepository {
 
   Future<NotePage?> page(String id) async {
     final p = await _db.pageById(id);
-    if (p == null) return null;
-    return NotePage(
-      id: p.id,
-      sectionId: p.sectionId,
-      title: p.title,
-      sourceFilePath: p.sourceFilePath,
-      sourceFileType: p.sourceFileType,
-      pageIndex: p.pageIndex,
-      createdAt: p.createdAt,
-      updatedAt: p.updatedAt,
-      pinned: p.pinned,
-      deleted: p.deleted,
-    );
+    return p == null ? null : _pageFromRow(p);
   }
 
   Future<void> renamePage(String id, String title) async {
@@ -137,6 +113,43 @@ class NoteRepository {
   Future<void> togglePin(String id, bool pinned) => _db.togglePin(id, pinned);
 
   Future<void> trashPage(String id) => _db.softDeletePage(id);
+
+  Future<void> restorePage(String id) => _db.restorePage(id);
+
+  Future<List<NotePage>> trashedPages() async {
+    final rows = await _db.trashedPages();
+    return rows.map(_pageFromRow).toList();
+  }
+
+  Future<List<NotePage>> searchPages(String query) async {
+    final rows = await _db.searchPages(query);
+    return rows.map(_pageFromRow).toList();
+  }
+
+  Future<void> renameNotebook(String id, String name) => _db.renameNotebook(id, name);
+  Future<void> renameSection(String id, String name) => _db.renameSection(id, name);
+  Future<void> deleteSection(String id) => _db.deleteSection(id);
+
+  /// Permanently deletes every trashed page (and their imported files).
+  Future<void> emptyTrash() async {
+    final trashed = await trashedPages();
+    for (final p in trashed) {
+      await deletePage(p.id, sourceFilePath: p.sourceFilePath);
+    }
+  }
+
+  NotePage _pageFromRow(drift.Page p) => NotePage(
+        id: p.id,
+        sectionId: p.sectionId,
+        title: p.title,
+        sourceFilePath: p.sourceFilePath,
+        sourceFileType: p.sourceFileType,
+        pageIndex: p.pageIndex,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        pinned: p.pinned,
+        deleted: p.deleted,
+      );
 
   // ---- Strokes content ----
   Future<List<Stroke>> strokesFor(String pageId) async {
