@@ -1,7 +1,14 @@
+import 'dart:io' as io;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../data/database.dart';
 import '../models/note_models.dart';
@@ -25,6 +32,7 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   final _canvasKey = GlobalKey<AnnotationCanvasState>();
+  final _boundaryKey = GlobalKey();
   final ImportService _import = ImportService();
 
   StrokeTool _tool = StrokeTool.pen;
@@ -121,6 +129,74 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
+  Future<Uint8List?> _capturePngBytes() async {
+    try {
+      final boundary = _boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return null;
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      return byteData?.buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _sharePng() async {
+    final bytes = await _capturePngBytes();
+    if (bytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to generate PNG image')),
+        );
+      }
+      return;
+    }
+    final tempDir = await getTemporaryDirectory();
+    final file = io.File('${tempDir.path}/${_page.title}.png');
+    await file.writeAsBytes(bytes);
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(file.path)],
+        subject: 'Exported Page: ${_page.title}',
+      ),
+    );
+  }
+
+  Future<void> _sharePdf() async {
+    final bytes = await _capturePngBytes();
+    if (bytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to generate PDF document')),
+        );
+      }
+      return;
+    }
+    final pdf = pw.Document();
+    final image = pw.MemoryImage(bytes);
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(10),
+        build: (pw.Context context) {
+          return pw.Center(
+            child: pw.Image(image, fit: pw.BoxFit.contain),
+          );
+        },
+      ),
+    );
+
+    final tempDir = await getTemporaryDirectory();
+    final file = io.File('${tempDir.path}/${_page.title}.pdf');
+    await file.writeAsBytes(await pdf.save());
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(file.path)],
+        subject: 'Exported Page: ${_page.title}',
+      ),
+    );
+  }
+
 String _formatTime(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
@@ -146,7 +222,7 @@ String _formatTime(DateTime t) =>
                         child: InkWell(
                           borderRadius: BorderRadius.circular(16),
                           onTap: () => Navigator.pop(ctx, c),
-                          child: SizedBox(width: 32, height: 32),
+                          child: const SizedBox(width: 32, height: 32),
                         ),
                       ),
                     Material(
@@ -155,7 +231,7 @@ String _formatTime(DateTime t) =>
                       child: InkWell(
                         borderRadius: BorderRadius.circular(16),
                         onTap: () => Navigator.pop(ctx, picked),
-                        child: SizedBox(width: 32, height: 32),
+                        child: const SizedBox(width: 32, height: 32),
                       ),
                     ),
                   ],
@@ -338,6 +414,21 @@ IconButton(
               );
             },
           ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.share),
+            tooltip: 'Export & Share',
+            onSelected: (val) {
+              if (val == 'png') {
+                _sharePng();
+              } else if (val == 'pdf') {
+                _sharePdf();
+              }
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'png', child: Text('Share as PNG image')),
+              const PopupMenuItem(value: 'pdf', child: Text('Share as PDF document')),
+            ],
+          ),
           _EditorThemeMenu(),
           PopupMenuButton<StrokeTool>(
             onSelected: (t) => setState(() => _tool = t),
@@ -351,11 +442,13 @@ IconButton(
           ? const Center(child: CircularProgressIndicator())
           : _EditorBody(
               canvasKey: _canvasKey,
+              boundaryKey: _boundaryKey,
               tool: _tool,
               color: _color,
               width: _width,
               strokes: _strokes,
               background: _background,
+              template: _page.template,
               onChanged: _onStrokesChanged,
               onTool: (t) => setState(() => _tool = t),
               onColor: (c) => setState(() => _color = c),
@@ -434,11 +527,13 @@ class _EditorThemeMenu extends StatelessWidget {
 class _EditorBody extends StatelessWidget {
   const _EditorBody({
     required this.canvasKey,
+    required this.boundaryKey,
     required this.tool,
     required this.color,
     required this.width,
     required this.strokes,
     required this.background,
+    this.template,
     required this.onChanged,
     required this.onTool,
     required this.onColor,
@@ -446,11 +541,13 @@ class _EditorBody extends StatelessWidget {
   });
 
   final GlobalKey<AnnotationCanvasState> canvasKey;
+  final GlobalKey boundaryKey;
   final StrokeTool tool;
   final Color color;
   final double width;
   final List<Stroke> strokes;
   final ui.Image? background;
+  final String? template;
   final ValueChanged<List<Stroke>> onChanged;
   final ValueChanged<StrokeTool> onTool;
   final ValueChanged<Color> onColor;
@@ -478,14 +575,18 @@ class _EditorBody extends StatelessWidget {
           onWidth: onWidth,
         ),
         Expanded(
-          child: AnnotationCanvas(
-            key: canvasKey,
-            tool: tool,
-            color: color,
-            width: width,
-            initialStrokes: strokes,
-            backgroundImage: background,
-            onChanged: onChanged,
+          child: RepaintBoundary(
+            key: boundaryKey,
+            child: AnnotationCanvas(
+              key: canvasKey,
+              tool: tool,
+              color: color,
+              width: width,
+              initialStrokes: strokes,
+              backgroundImage: background,
+              template: template,
+              onChanged: onChanged,
+            ),
           ),
         ),
       ],

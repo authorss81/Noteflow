@@ -492,6 +492,73 @@ class _PageListPanel extends StatelessWidget {
   final AppState app;
   final VoidCallback onImport;
 
+  void _addPageDialog(BuildContext context, AppState app) {
+    final titleController = TextEditingController(text: 'Untitled');
+    String template = 'blank';
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('New page'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: titleController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Title',
+                  hintText: 'Enter page title…',
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Paper Template', style: TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: template,
+                decoration: const InputDecoration(
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'blank', child: Text('Blank paper')),
+                  DropdownMenuItem(value: 'lined', child: Text('Lined paper')),
+                  DropdownMenuItem(value: 'grid', child: Text('Grid paper')),
+                  DropdownMenuItem(value: 'dots', child: Text('Dot grid')),
+                ],
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() => template = val);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final title = titleController.text.trim();
+                await app.addPage(
+                  title: title.isEmpty ? 'Untitled' : title,
+                  template: template == 'blank' ? null : template,
+                );
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                }
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -529,7 +596,7 @@ class _PageListPanel extends StatelessWidget {
                 IconButton(
                   icon: const Icon(Icons.edit_note),
                   tooltip: 'New blank page',
-                  onPressed: () => app.addPage(),
+                  onPressed: () => _addPageDialog(context, app),
                 ),
               ],
             ),

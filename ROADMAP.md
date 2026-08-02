@@ -465,18 +465,17 @@
 
 ## Plugin / integration feasibility summary
 
-| Tool | Integrate? | How | Verdict |
+| Tool | Integration Type | Integration Strategy | Recommendation |
 |---|---|---|---|
-| **Bitwarden** | Partial | Vault Management API + `url_launcher` for copy/paste | Medium value, medium complexity |
-| **ProtonVPN** | No | No public API; use `flutter_vpn_service` for generic WireGuard/IKEv2 instead | Low value for a note app |
-| **PDF24** | No (replicate natively) | Use `pdf_utils` for merge/split/compress | High value, medium complexity |
-| **LibreOffice** | Optional | `libre_office_kit_converter_plugin` for DOCX→PDF | Medium value, high complexity (600 MB+) |
-| **LocalSend** | Yes | Custom REST client using `http` package | Very high value, medium complexity |
-| **HandBrake** | No (use native) | `video_compress` or `v_video_compressor` | Low value for notes |
-| **7-Zip** | Partial | `archive` (Dart, pure Dart) for ZIP; `flutter_7zip` for 7z on desktop | Medium value, easy |
-| **Tesseract OCR** | Yes | `tesseract_ocr` for on-device OCR | Very high value, medium complexity |
-| **Markdown preview** | Yes | `flutter_markdown_plus` | Very high value, easy |
-| **LaTeX rendering** | Yes | `ratex_flutter` (native FFI, no WebView) | High value for academic notes, easy |
+| **LocalSend** | **Core Feature** | Native Dart REST client using `http` over local WiFi. | **Highly Recommended**: Core feature for P2P local note sharing without cloud dependencies. |
+| **Markdown & LaTeX** | **Core Feature** | Rendered inline via `flutter_markdown_plus` and `ratex_flutter` (FFI). | **Highly Recommended**: Core feature for academic, math, developer, and code-based notes. |
+| **PDF24 (PDF Tools)** | **Core Feature** | Natively merge/split using pure Dart `pdf` or `pdf_utils` libraries. | **Recommended**: Core feature for manipulating slides, lecture notes, or combined pages. |
+| **Tesseract OCR** | **Optional Plugin** | Loaded dynamically on demand with bundled engine binaries and language data. | **Recommended as Plugin**: Dynamically loaded only when needed to keep the base app binary lightweight. |
+| **LibreOffice** | **Optional Plugin** | `libre_office_kit_converter` plugin installed dynamically or only on mobile/desktop. | **Recommended as Plugin**: LibreOffice binaries add >600MB, so keeping it optional is critical. |
+| **Bitwarden** | **External Integration** | Launch vault apps or programmatic local API (`bw serve`) via `url_launcher`. | **Recommended as Integration**: Delegate secure password storage to dedicated managers. |
+| **7-Zip** | **Core Feature** | Bundled ZIP/Tar compression via pure Dart `archive` package. | **Highly Recommended**: Core feature for database exports and backups. |
+| **ProtonVPN** | **Declined** | No integration planned. | VPN utility is out of scope for a local-first note-taking app. |
+| **HandBrake** | **Declined** | No integration planned; use native light compressor. | Video notes can use standard `video_compress` rather than bulky external codecs. |
 
 ---
 

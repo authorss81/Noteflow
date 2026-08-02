@@ -75,6 +75,7 @@ class NoteRepository {
     String? sourceFilePath,
     String? sourceFileType,
     int pageIndex = 0,
+    String? template,
   }) async {
     final now = DateTime.now();
     final p = NotePage(
@@ -86,8 +87,9 @@ class NoteRepository {
       pageIndex: pageIndex,
       createdAt: now,
       updatedAt: now,
+      template: template,
     );
-    await _db.insertPage(PagesCompanion.insert(
+    await _db.insertPage(drift.PagesCompanion.insert(
       id: p.id,
       sectionId: p.sectionId,
       title: p.title,
@@ -96,6 +98,7 @@ class NoteRepository {
       pageIndex: Value(p.pageIndex),
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
+      template: Value(p.template),
     ));
     return p;
   }
@@ -149,6 +152,7 @@ class NoteRepository {
         updatedAt: p.updatedAt,
         pinned: p.pinned,
         deleted: p.deleted,
+        template: p.template,
       );
 
   // ---- Strokes content ----

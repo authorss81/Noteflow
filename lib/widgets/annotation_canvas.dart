@@ -14,6 +14,7 @@ class AnnotationCanvas extends StatefulWidget {
     required this.width,
     required this.initialStrokes,
     this.backgroundImage,
+    this.template,
     this.onChanged,
   });
 
@@ -22,6 +23,7 @@ class AnnotationCanvas extends StatefulWidget {
   final double width;
   final List<Stroke> initialStrokes;
   final ui.Image? backgroundImage;
+  final String? template;
   final ValueChanged<List<Stroke>>? onChanged;
 
   @override
@@ -235,6 +237,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
                   strokes: _strokes,
                   inProgress: _inProgressStroke(),
                   backgroundImage: widget.backgroundImage,
+                  template: widget.template,
                   palette: PaperPalette.of(
                       themeModeOf(Theme.of(context).colorScheme)),
                   canvasColor: canvasColor,
@@ -325,6 +328,7 @@ class _CanvasPainter extends CustomPainter {
     required this.strokes,
     required this.inProgress,
     required this.backgroundImage,
+    required this.template,
     required this.palette,
     required this.canvasColor,
   });
@@ -332,6 +336,7 @@ class _CanvasPainter extends CustomPainter {
   final List<Stroke> strokes;
   final Stroke? inProgress;
   final ui.Image? backgroundImage;
+  final String? template;
   final PaperPalette palette;
   final Color canvasColor;
 
@@ -341,6 +346,10 @@ class _CanvasPainter extends CustomPainter {
       Offset.zero & size,
       Paint()..color = canvasColor,
     );
+
+    if (template != null) {
+      _paintTemplate(canvas, size);
+    }
 
     if (backgroundImage != null) {
       final fit = _containFit(backgroundImage!, size);
@@ -452,11 +461,58 @@ class _CanvasPainter extends CustomPainter {
     }
   }
 
+  void _paintTemplate(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = palette.text.withValues(alpha: 0.08)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    switch (template) {
+      case 'lined':
+        const spacing = 40.0;
+        final lines = (size.height / spacing).floor();
+        for (var i = 1; i <= lines; i++) {
+          final y = i * spacing;
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+        }
+        break;
+      case 'grid':
+        const spacing = 40.0;
+        final rows = (size.height / spacing).floor();
+        final cols = (size.width / spacing).floor();
+        for (var i = 1; i <= rows; i++) {
+          final y = i * spacing;
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+        }
+        for (var j = 1; j <= cols; j++) {
+          final x = j * spacing;
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+        }
+        break;
+      case 'dots':
+        const spacing = 40.0;
+        final rows = (size.height / spacing).floor();
+        final cols = (size.width / spacing).floor();
+        final dotPaint = Paint()
+          ..color = palette.text.withValues(alpha: 0.15)
+          ..style = PaintingStyle.fill;
+        for (var i = 1; i < rows; i++) {
+          for (var j = 1; j < cols; j++) {
+            canvas.drawCircle(Offset(j * spacing, i * spacing), 1.5, dotPaint);
+          }
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
   @override
   bool shouldRepaint(covariant _CanvasPainter old) =>
       old.strokes != strokes ||
       old.inProgress != inProgress ||
       old.backgroundImage != backgroundImage ||
+      old.template != template ||
       old.palette != palette ||
       old.canvasColor != canvasColor;
 }

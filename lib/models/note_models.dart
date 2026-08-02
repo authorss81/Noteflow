@@ -46,6 +46,7 @@ class NotePage {
   final DateTime updatedAt;
   final bool pinned;
   final bool deleted;
+  final String? template; // blank, lined, grid, dots
 
   const NotePage({
     required this.id,
@@ -58,6 +59,7 @@ class NotePage {
     required this.updatedAt,
     this.pinned = false,
     this.deleted = false,
+    this.template,
   });
 
   NotePage copyWith({
@@ -68,6 +70,7 @@ class NotePage {
     DateTime? updatedAt,
     bool? pinned,
     bool? deleted,
+    String? template,
   }) {
     return NotePage(
       id: id,
@@ -80,6 +83,7 @@ class NotePage {
       updatedAt: updatedAt ?? this.updatedAt,
       pinned: pinned ?? this.pinned,
       deleted: deleted ?? this.deleted,
+      template: template ?? this.template,
     );
   }
 }
