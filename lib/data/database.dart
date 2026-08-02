@@ -60,12 +60,35 @@ class PageVersions extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// Tags for categorizing pages beyond the notebook/section hierarchy.
+class Tags extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  IntColumn get color => integer().withDefault(const Constant(0xFF1B365D))();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Junction table linking pages to tags (many-to-many).
+class PageTags extends Table {
+  TextColumn get id => text()();
+  TextColumn get pageId => text().references(Pages, #id)();
+  TextColumn get tagId => text().references(Tags, #id)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(tables: [
   Notebooks,
   Sections,
   Pages,
   PageContent,
   PageVersions,
+  Tags,
+  PageTags,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
@@ -215,5 +238,52 @@ class AppDatabase extends _$AppDatabase {
     for (final v in versions.skip(keep)) {
       await deleteVersion(v.id);
     }
+  }
+
+  // ---- Tags ----
+  Future<List<Tag>> allTags() =>
+      (select(tags)..orderBy([(t) => OrderingTerm.asc(t.name)])).get();
+
+  Future<Tag?> tagById(String id) =>
+      (select(tags)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<void> insertTag(TagsCompanion t) => into(tags).insertOnConflictUpdate(t);
+
+  Future<void> renameTag(String id, String name) =>
+      (update(tags)..where((t) => t.id.equals(id)))
+          .write(TagsCompanion(name: Value(name)));
+
+  Future<void> deleteTag(String id) async {
+    await (delete(pageTags)..where((t) => t.tagId.equals(id))).go();
+    await (delete(tags)..where((t) => t.id.equals(id))).go();
+  }
+
+  // ---- Page-Tag junction ----
+  Future<List<Tag>> tagsForPage(String pageId) async {
+    final rows = await (select(pageTags)
+          ..where((t) => t.pageId.equals(pageId))
+          ..join([innerJoin(tags, tags.id.equalsExp(pageTags.tagId))]))
+        .get();
+    return rows.map((r) => r.readTable(tags)).toList();
+  }
+
+  Future<void> addTagToPage(String pageId, String tagId) =>
+      into(pageTags).insertOnConflictUpdate(PageTagsCompanion.insert(
+        id: _id(),
+        pageId: pageId,
+        tagId: tagId,
+      ));
+
+  Future<void> removeTagFromPage(String pageId, String tagId) =>
+      (delete(pageTags)
+            ..where((t) => t.pageId.equals(pageId) & t.tagId.equals(tagId)))
+          .go();
+
+  Future<List<NotePage>> pagesByTag(String tagId) async {
+    final rows = await (select(pageTags)
+          ..where((t) => t.tagId.equals(tagId))
+          ..join([innerJoin(pages, pages.id.equalsExp(pageTags.pageId))]))
+        .get();
+    return rows.map((r) => _pageFromRow(r.readTable(pages))).toList();
   }
 }
