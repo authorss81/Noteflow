@@ -1,6 +1,6 @@
 # Noteflow — Detailed Roadmap
 
-> Last updated: 2026-08-02
+> Last updated: 2026-08-03
 > Hardware constraint: AMD Athlon 200GE (2C/4T, ~2.7 GB free RAM)
 > Build strategy: cloud builds via GitHub Actions (no local Android SDK)
 > All dependencies must be FOSS or free for commercial use.
@@ -11,558 +11,450 @@
 
 | Phase | Status |
 |---|---|
-| P0 — Make it actually work | ✅ done (7/7) |
-| P1 — Usable day-to-day | ✅ done (10/10) |
-| P2 — Feels like a real annotation app | 🔄 in progress |
-| P3 — Data safety & multi-device | 📋 planned |
-| P4 — World-class features | 📋 planned |
+| P0 — Make it actually work | ✅ done |
+| P1 — Usable day-to-day | ✅ done |
+| P2 — Real annotation app | 🟡 partially done (see §Review) |
+| P3 — Data safety & multi-device | 🟡 partially done (see §Review) |
+| R1 — Immediate fixes & security hardening | 🔥 DO NOW (new phase) |
+| E1 — Engagement / delight ("fun") | 🔄 planned after R1 |
+| P4 — World-class | 📋 **moved LATER** |
+| P5 — Platform & multi-device vision | 📋 **moved LATER** |
 
 ---
 
-## Bug fixes applied 2026-08-02
+## § Independent review — Phase-by-phase audit (2026-08-03)
 
-| # | Bug | Fix |
+> Four parallel senior reviewers (Android dev, strictest code critic, competitor/product analyst, security pentester) plus competitive web research audited P1/P2/P3. Combined verdict below.
+
+### What was reviewed
+- **P0 (7/7): ✅ done** — PDF page-1 render, text import, lifecycle flush, autosave, versioning & restore all real.
+- **P1 (10/10): ✅ done** — CRUD, trash, rename, autosave indicator, editor themes, empty states.
+- **P2 (10 items):** 🟡 **partial** — export, templates, merge/split, version prune are real; **tags (P2-6) = SCHEMA ONLY / dead**, fuzzy search (P2-7) = title `LIKE` only, batch ops (P2-8) missing, formatting (P2-5) missing, brightness/contrast (P2-4) missing.
+- **P3 (majority):** 🟡 **partial** — E2E encryption + biometrics + backup + P2P **exist but have serious security flaws** (§Security). P3-5 PDF tools, P3-6 OCR, P3-8 LibreOffice not real.
+
+### Top findings (from all reviewers)
+1. **Multi-page PDF imports each page as a separate note** — defeats the #1 marker use case. (confirmed `home_screen.dart:199-232`)
+2. **Mobile "notebook click does nothing"** — the 3-level tree is rendered as 3 *sibling tabs*, so selection never navigates. (`home_screen.dart:2075-2093`)
+3. **"Sections does nothing"** — every notebook auto-creates one `Quick Notes` section; no "move page between sections/notebooks"; taps only highlight. (`app_state.dart:190`, `home_screen.dart:1147`)
+4. **`select`/pan tool unreachable** → pinch-zoom & drag-pan gestures disabled in the canvas. (`annotation_canvas.dart:211-212`, `editor_screen.dart:692-699`)
+5. **Search is title-only** — no content / tag / OCR search, no FTS5.
+6. **Search engine/OCR is FAKE** — OCR returns hard-coded strings for titles containing "invoice"/"receipt"; plugin "downloads" are simulated. Trust killer.
+7. **CRITICAL (strict-critic): Master Password can never be enabled** — `_uuid().codeUnits.sublist(0,16)` RangeErrors (10-char string) swallowed → `setMasterPassword` always false. E2E + lock unreachable.
+8. **CRITICAL (strict-critic): Theme system never applied** — `MaterialApp` sets no `theme`/`themeMode`; 4 theme modes are decorative.
+9. **CRITICAL (Android): release signed with debug keystore + placeholder `com.yourname.noteflow`** → not publishable; `allowBackup` unset (=true); heavy imports/autosave on UI isolate → OOM/ANR; startup blocks first frame.
+7. **Security Criticals** — release signed with debug keystore; PBKDF2=1000 iterations; timestamp-derived salt; raw master password persisted for biometrics; **Zip-Slip path traversal in backup restore**; unauthenticated cleartext HTTP P2P listener on 0.0.0.0. (full list below)
+
+See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
+
+---
+
+## Phase R1 — Immediate fixes & critical hardening (DO NOW)
+
+### R1-CRITICAL SECURITY (must fix before any release)
+| ID | Sev | Fix | File:line |
+|---|---|---|---|
+| R1-1 | 🔴 Critical | **Stop signing release with debug keystore** → private release keystore via `key.properties`, keep out of VCS | `android/app/build.gradle.kts:28-32` |
+| R1-2 | 🔴 Critical | Raise KDF to **Argon2id** (≥19 MiB, ≥2 passes) or PBKDF2 ≥600,000; track it in metadata | `encryption_service.dart:11` |
+| R1-3 | 🔴 Critical | Use **CSPRNG salt** (not timestamp `codeUnits`) | `app_state.dart:296,306,328` |
+| R1-4 | 🔴 Critical | **No master-password-in-keystore for biometrics** → biometric-bound key wrapping the DEK | `app_state.dart:348` |
+| R1-5 | 🔴 Critical | **Zip-Slip fix in backup restore** — sanitize/`canonicalize/allowlist archive entry names, block `..`/absolute | `home_screen.dart:464-478` |
+| R1-6 | 🔴 Critical | Enable **R8/ProGuard `isMinifyEnabled` + `shrinkResources`** + `proguard-rules.pro` | `android/app/build.gradle.kts` |
+
+### R1-BLOCKING BUGS (silently dead features — add to do-now priority)
+| ID | Sev | Bug | Fix | File:line |
+|---|---|---|---|---|
+| R1-30 | 🔴 Critical | **Master Password can NEVER be enabled.** `_uuid()` returns a 10-char base36 string; `.codeUnits.sublist(0,16)` on a 10-element list throws `RangeError`, swallowed by `catch` → `setMasterPassword` always `false`. Whole E2E + lock unreachable. | CSPRNG 16-byte salt, base64 encode/decode | `app_state.dart:296,306-320` |
+| R1-31 | 🔴 Critical | **Theming is wired to nothing.** `MaterialApp` sets **no `theme:`/`darkTheme:`/`themeMode:`** — `AppTheme`/`PaperPalette` unused; the 4 theme modes never change the UI; theme menus are decorative. | Bind `theme`, `darkTheme`, `themeMode` in `main.dart` | `main.dart:34-40`, `app_theme.dart` |
+| R1-32 | 🔴 Critical | **Cross-check R1-3/R1-2 are live:** the salt bug (this R1-1) also breaks `R1-3`'s CSPRNG fix silently. | complete CSPRNG + KDF fix | (see R1-1/2/3) |
+
+### R1-HIGH (must fix before marketing "private")
+7. Wire `SecurityService` (Keystore DEK) — currently **dead code**; E2E uses master-password-derived KEK directly. (`security_service.dart:33`, `app_state.dart:22`)
+8. Remove plaintext verifier oracle; use a memory-hard hash stored inside the encrypted wrapper. (`app_state.dart:301-311`)
+9. Automatically lock on `AppLifecycleState.resumed` + inactivity timeout; clear `_repo.encryptionKey` on background. (`main.dart:37`, `editor_screen.dart:55-63`)
+10. Encrypt metadata (titles, notebook names, tags) + imported source files, not just `strokesJson`. (`database.dart:43-62`, `import_service.dart:38`)
+11. Harden P2P: no wildcard `Access-Control-Allow-Origin: *`, bind loopback or require PIN/peer handshake, size cap on body, **no cleartext HTTP (blocked on Android 9+)**, no plaintext note transfer. Add `networkSecurityConfig`/`usesCleartextTraffic` for LAN. (`p2p_share_service.dart:19-52`)
+12. Add `INTERNET` permission to **main** manifest (currently debug-only → P2P silently fails in release), `USE_BIOMETRIC` via `local_auth`. (`android/app/src/*/AndroidManifest.xml`)
+13. **Placeholder `applicationId`/`namespace` `com.yourname.noteflow`** never replaced — must be globally unique before upload. (`android/app/build.gradle.kts:8,19`, `MainActivity.kt`)
+14. **`android:allowBackup` unset (=true)** — Android Auto/device backup captures SharedPrefs (salt+verifier) + SQLite (strokes ciphertext) + imported files, undermining "100% private". Set `allowBackup="false"` + `dataExtractionRules` exclude. (`AndroidManifest.xml`)
+15. **Heavy work on the UI isolate** → ANR/jank & OOM: `loadPdfPages` renders EVERY page at native res into a simultaneous `ui.Image` list + PNG-encodes + writes on main isolate; `file_picker withData:true` slurps whole files; autosave re-serializes+encrypts full stroke list each 400 ms. Move to `Isolate.run`/`compute`, dispose images after write. (`import_service.dart:21,121-187`, `editor_screen.dart:139`)
+16. **Startup blocks first frame**: `main.dart` awaits SharedPrefs + DB open + `bootstrap()` which starts the P2P network server before `runApp`. Defer P2P/DB-heavy init to background. (`main.dart:12-21`, `app_state.dart:102-113`)
+17. **`allowBackup`/metadata plaintext** also breaks Play Data-safety honesty (see R1-10/14).
+
+### R1-LOW (fix when convenient)
+18. Sanitize LIKE `%`/`_` in search (`database.dart:190-195`); debounce search ~300 ms (`home_screen.dart:1503`).
+19. Restrict remote images in Markdown (`imageBuilder`) to stop external fetches. (`markdown_preview_screen.dart:97`)
+20. Don't auto-copy note/OCR text to global clipboard; clear after delay. (`home_screen.dart:2044`)
+21. Sanitize imported filenames for path traversal; only persist original PDF bytes if actually referenced. (`import_service.dart:37`, `home_screen.dart:198`)
+
+### R1-FUNCTIONAL (core UX + correctness blockers)
+22. **R1-22 · Multi-page PDF = one document.** Keep PDF as ONE `NotePage` with a page list (`pageIndex` already in schema), swipe/prev-next + page thumbnail strip; **"import as new doc vs insert"** option (GoodNotes/Notability parity). Kill per-page-note explosion **and orphaned original PDF** (each page gets its own PNG; the raw PDF file leaks on disk). Move rendering/PNG/file IO off the UI isolate. (`home_screen.dart:199-232`, `import_service.dart:121-187`)
+23. **R1-23 Mobile drill-down navigation.** Replace 3 sibling tabs with Notebook → tap → sections → tap → pages, breadcrumb `Notebook / Section / Page`, `Icons.chevron_right` disclosure; **auto-navigate on select & auto-select newly created section** so the visible panel actually changes. Fix "click does nothing". (`home_screen.dart:2075-2093,935,1147`, `app_state.dart:171-213`)
+24. **R1-24 Give Sections a purpose.** Remove forced single "Quick Notes"; "New section" CTA + empty-state explanation; highlight section in Pages header. (`app_state.dart:190`, `repository.dart:54-64`)
+25. **R1-25 Restore reachable `select`/pan tool.** Add to toolbar so pinch-zoom/pan actually works — `panEnabled/scaleEnabled` only fire when `tool==StrokeTool.select`, which has NO visible button and no real select behavior. (`annotation_canvas.dart:211-212,445-446`, `editor_screen.dart:692-700,463-468`)
+26. **R1-26 Add "Move to Section / Move to Notebook"** on page menu (needs repo `movePage` + refresh). (`home_screen.dart` page menu)
+27. **R1-27 Add content search** — simple `WHERE strokesJson LIKE` on text strokes first; later FTS5 (`database.db`, `home_screen.dart`).
+28. **R1-28 Rebuild import flow non-blocking** — progress sheet + per-file status + cancel + "PDF will create N pages" preview + undo; won't force-push last page. (`home_screen.dart:171-282`)
+29. **R1-29 Kill fake OCR/plugins.** OCR returns hard-coded text ("Invoice #INV-2026", "Store: Noteflow Inc.") keyed on title; `downloadPlugin` is a fake progress timer. Implement real on-device OCR or remove; drop fake "downloads". (`home_screen.dart:2003-2059`, `plugin_loader_service.dart:16-65`)
+
+### R1-CORRECTNESS (races, leaks, silent bugs)
+30. **File leaks on cascade delete.** `deleteNotebook`/`deleteSection` → `db.deletePage` removes DB rows only, never the `imports/` files (only `emptyTrash`/per-page cleanup does). Return deleted pages' `sourceFilePath`s and delete files. (`repository.dart:250-261`, `database.dart:138-173,549-553`)
+31. **P2P listener leak.** `_setupP2pListener` `addListener` without `removeListener` → every unlock creates a new HomeScreen subscriber; N duplicate SnackBars after repeated unlocks. Add `dispose`+remove. (`home_screen.dart:44-59`)
+32. **`_reloadTree` async race.** Overlapping reloads interleave; last *completion* wins (can show stale notebook). Add monotonic reload token / serialize mutations. (`app_state.dart:132-161`)
+33. **Autosave flush fire-and-forget in `dispose()`** (unawaited, then `detach()` cancels timers) → pending strokes can be lost on process kill; also no `PopScope` flush on system back. (`editor_screen.dart:93-100`, `autosave_service.dart:81-96`)
+34. **"Current version" highlight never works** — comparing `List<Stroke>` with `==` uses identity, always `false`. (`editor_screen.dart:1497,1210`)
+35. **Random `_strokeId`/`_uuid` collisions** (µs timestamp) → PK conflicts / silent overwrite. Use uuid/CSPRNG. (`annotation_canvas.dart:180`, `app_state.dart:373`, `repository.dart:340`)
+36. **`exit(0)` after backup restore** — hard-kill anti-pattern, can corrupt DB; prefer graceful re-nav. (`home_screen.dart:491`)
+
+### R1-Release & CI
+37. Replace placeholder `applicationId`; create prod keystore (`key.properties` secret in GH Actions); build **AAB** not just debug APK; pin `drift_dev` version; `-Xmx8G` in `gradle.properties` risks GitHub runner OOM → reduce to 4G.
+38. Add a `flutter analyze` + `flutter test` gate (both workflows already call them); add a secrets scan.
+39. Note: `flutter_secure_storage` on Windows/Linux may fall back to weaker storage — document/limit cross-platform.
+
+**Definition of done for R1:**
+- 🔴 Critical security fixed: no debug signing, no placeholder AppId, CSPRNG salt + Argon2id/PBKDF2≥600k, no master-password-in-keystore, Zip-Slip blocked, R8 enabled.
+- 🔴 **Master Password actually enables** (R1-30) and **themes actually apply** (R1-31).
+- No mock/fake features shipped (OCR/plugins real or removed).
+- PDF stays one document; mobile drill navigates; sections usable; pan/zoom reachable; content search works; Critical races/leaks (R1-30..36) resolved.
+- `flutter analyze` + `flutter test` clean.
+
+---
+
+## Phase E1 — UX & engagement ("make it delightful")
+
+(Engagement/animation/animation/engagement + accessibility bar. Prioritized; start with cheap/low-risk.)
+
+### E1-1 · Haptics (base writer feeling)
+- `HapticFeedback.mediumImpact()` on page/section/notebook create + import complete; `lightImpact()` on undo/redo; pen-down/up snap. (`home_screen.dart:260,1251`; `annotation_canvas.dart:63,73,150-163`)
+
+### E1-2 · Save celebrate (cheap, high perceived speed)
+- On `saving → false`, `ScaleTransition` green check next to "Saved at HH:MM" + `selectionClick()`. (`editor_screen.dart:351-363`)
+
+### E1-3 · Hero transitions page-list → editor
+- `Hero(tag: 'page-$id')` on the page tile leading icon + matching Hero in editor AppBar → "hand holds paper". Use `PageRouteBuilder` fade-through for markdown preview too. (`home_screen.dart:1714-1717`)
+
+### E1-4 · Animated empty states
+- One shared `_EmptyState` widget: 56px icon + `TweenAnimationBuilder` scale-in w/ elastic `easeOutBack`; reuse for all 6 current bare-text empty states. (`home_screen.dart:897,1109,1545,1583,1647`)
+
+### E1-5 · Animated toolbar tool-selection
+- `AnimatedContainer` color 120ms + slight scale on tool select; share `AnimatedIcon` for active-tool. (`editor_screen.dart:667`)
+
+### E1-6 · "Living ink" canvas feel
+- In `_CanvasPainter`, smooth paths (cubic bezier) + a tip-dot that lags the pointer while pen down; make writing feel hand-drawn. (`annotation_canvas.dart`)
+
+### E1-7 · Loading skeleton
+- Replace flat `CircularProgressIndicator` on canvas load with a paper-skeleton shimmer (animated gradient over template). (`editor_screen.dart:471-472`)
+
+### E1-8 · Animated micro-interactions
+- Confetti/celebrate `CustomPainter` (no lib) on "Imported N pages" / "Pages merged"; page-restore ripple. (`home_screen.dart:1470-1478`)
+
+### E1-9 · Pan/zoom scale feedback
+- `AnimatedScale` scale/% indicator overlay ("80%") while panning/zooming. (`annotation_canvas.dart`)
+
+### E1-ACCESSIBILITY (do alongside)
+- Add `Semantics` container around canvas + `excludeFromSemantics` for raw paint; grow color swatches/toolbar to ≥48dp touch targets; unify success/failure feedback system (not just color). (`editor_screen.dart:657-707`; `annotation_canvas.dart:233-245`)
+
+**Impact of E1:** adds psychological delight & an "award-grade canvas" feel; addresses the "emotionally flat" critique. Do E1-1..E1-5 first (cheap), E1-6..E1-9 next, E1-10 always.
+
+---
+
+## Phase P4 — World-class features («MOVED LATER»)
+
+> These remain valuable but are after R1 + E1. Do they need backend server (P4-3/4) and macOS (widgets/collab) which are deferred here.
+
+| Item | Scope | Deps / blockers |
 |---|---|---|
-| B1 | Trash "Empty trash" did not refresh the UI | Added `await _reloadTree()` to `AppState.emptyTrash()` |
-| B2 | PDF import: back arrow (←) and redo arrow (⟳) superimposed in editor AppBar | Added `automaticallyImplyLeading: false` + explicit back button (`Icons.arrow_back`) |
-| B3 | Web build fails with `driftDatabase` error | Upgraded `drift_flutter` 0.2.8 → 0.3.1, added `DriftWebOptions`, updated `sqlite3.wasm` + `drift_worker.js` to drift-2.34.3 release |
+| P4-1 Diagramming & mind maps | `flutter_flow_chart` + Mermaid via WebView | medium-hard, low CPU |
+| P4-2 Home screen widgets | `home_widget`, `quick_actions`, WidgetKit | hard, requires iOS native |
+| P4-3 Passkey auth | `passkeys` | needs relying-party server |
+| P4-4 Self-hosted sync (Rust axum) | rust server + dart client | needs Rust toolchain; hard |
+| P4-5 Web collab editing | `dart_automerge` | DEFERRED until FFI stable |
+
+## Phase P5 — Platform & multi-device vision (MOVED LATER)
+
+| Re | Scope | blockers |
+|---|---|---|
+| P5-1 Real on-device OCR (Tesseract) | build `tesseract_ocr` + `eng.traineddata`, background isolate | replaces fake mock; Medium CPU |
+| P5-2 Self-hosted sync | see P4-4 | needs Rust backend |
+
+*(Consolidated; other P2/P3 satellite items go into backlog: version diff, DB VACUUM, dark auto-detect, PDF24 tools, LibreOffice, Bitwarden, 7z in P3-list, video compress.)* — see Phase P3 backlog below.
 
 ---
 
-## Phase P2 — "Feels like a real annotation app"
+## Phase P3 — Data safety & multi-device (existing backlog, mostly partial)
+
+> Many P3 items partially ship (E2E, biometric, backup, P2P) but need the R1 hardening fixes first. Items not yet done remain here as backlog.
+
+### P3-x remaining backlog
+- P3-6 OCR (real) — see P5-1
+- P3-8 LibreOffice DOCX→PDF — large native dep, optional plugin
+- P3-9 Bitwarden Vault integration — external, optional
+- P3-5 PDF24-style PDF tools
+- P3-11 video compression
+- P3-12/13... version diff, compression, VACUUM, dark auto — see P2/P the backlog below
+
+---
+
+## Phase P7 — Residual P2/P3 backlog (not priority)
+
+Items that remain unimplemented from P2/P3, deferred but not removed:
+- P2-5 text formatting (B/I/U)
+- P2-7 FTS5 fuzzy search (title → content + tag)
+- P2-8 batch ops (multi-select move/delete/tag)
+- P2-11 word count/statistics
+- P2-12 version diff/named checkpoints
+- P2-13 lossless version compression
+- P2-14 DB optimization (PRAGMA optimize, VACUUM, prune)
+- P2-15 auto dark-mode (`ThemeMode.system`)
+- P3-7 version merge (free checks offs), LaTeX
+- P3-10 7-Zip exports
+
+---
+
+## Security findings — full audit register (from parallel pentest)
+
+> All references built into the R1 tables above. Full register retained for traceability.
+
+The security findings are tracked in §R1 with severity and file:line. Re-audit after fixing R1-1 through R1-16.
+
+---
+
+## Overview of engagement/UX system ("make it fun")
+*(moved to E1 for build ordering — see Phase E1)*
+
+---
+
+## Previous planning (P2, P3 preserved for reference)
+
+> Full original P2-1..P2-15 and P3-1..P3-11 + P4 detail restored below. It describes the **intended** behavior; **R1 supersedes where it conflicts** (notably R1-17: PDF should become ONE document instead of per-page notes).
 
 ### P2-1: Multipage PDF import (currently only page 1 renders)
-
 **Problem:** `pdfrx` renders only the first page. Users importing multi-page PDFs see only page 1.
-
 **Approach:**
 - Iterate `PdfDocument.pages` (all pages, not just `.first`)
 - For each page, render to an image via `page.render(width, height)` → `ui.decodeImageFromPixels`
 - Create a separate `NotePage` per PDF page, each with the rendered image as background
 - Store the original PDF bytes in `sourceFilePath` for re-rendering at higher quality if needed
-
 **Complexity:** Medium
-**CPU impact:** Low — PDF rendering is single-threaded and fast on Athlon 200GE for typical documents (1–20 pages). For 50+ page PDFs, process in background isolate.
-**GitHub Actions:** Headless — no rendering needed in CI.
+**CPU impact:** Low — single-threaded, fast on Athlon 200GE for 1–20 pages; 50+ pages → background isolate.
 **Dependencies:** `pdfrx` (already imported)
+> ⚠️ **REPLACED by R1-17** — a PDF should be ONE document with a page list (`pageIndex` already in schema), swipe/prev-next + thumbnail strip, with "import as new doc vs insert" option. Per-page-note explosion is a confirmed product bug.
 
 ---
 
 ### P2-2: Import as vector (PDF) vs pixel (images)
-
 **Problem:** All imports are rasterized. Vector PDF data is lost.
-
-**Approach:**
-- PDF: keep raw bytes + re-render on demand via `pdfrx` (already vector-aware internally)
-- Images: store as filesystem files with `sourceFilePath`, use `image` package for metadata/processing
-- Add a `sourceFileType` column that distinguishes `pdf-vector` from `image-raster` from `text-plain`
-
-**Complexity:** Easy (PDF) / Easy (image)
-**CPU impact:** Negligible
-**Dependencies:** `image` (Dart package, pure Dart)
+**Approach:** PDF keep raw bytes + re-render on demand via `pdfrx`; store images on filesystem with `sourceFilePath`; add a `sourceFileType` column (pdf-vector / image-raster / text-plain).
+**Complexity:** Easy/Easy | **Dep:** `image`
 
 ---
 
 ### P2-3: Markdown file support (.md import/preview)
-
-**Approach:**
-- Detect `.md` extension at import
-- Parse with `markdown` package (Dart, pure Dart, no native deps)
-- Store raw `.md` text + rendered preview in database
-- Render with `flutter_markdown_plus` in a read-only preview mode
-
-**Complexity:** Easy
-**CPU impact:** Negligible
-**Dependencies:** `markdown`, `flutter_markdown_plus`
+**Approach:** Detect `.md`; parse with `markdown`; store raw + preview; render via `flutter_markdown_plus` in a read-only preview.
+**Complexity:** Easy | **Dep:** `markdown`, `flutter_markdown_plus`
+> ✅ Partially implemented (import/preview + editor "preview markdown" toggle).
 
 ---
 
 ### P2-4: Custom brushes, stroke width, brightness/contrast
-
-**Approach:**
-- Stroke width: `Slider` in editor toolbar, passed to canvas `Paint`
-- Brightness/contrast for PDF backgrounds: `ColorFilter.matrix()` on the background image
-- Color picker with recent colors: `flex_color_picker` (FOSS, MIT license)
-- Shape fill toggle (filled vs outline): `PaintingStyle.fill` / `PaintingStyle.stroke`
-
-**Complexity:** Medium (all combined)
-**CPU impact:** Negligible (sliders are UI-only; color filtering is GPU-accelerated)
-**Dependencies:** `flex_color_picker`
+**Approach:** stroke-width `Slider`; brightness/contrast via `ColorFilter.matrix()`; `flex_color_picker`; shape fill toggle.
+**Complexity:** Medium | **Deps:** `flex_color_picker`
+> 🟡 Partial — width + color picker done; **brightness/contrast & fill toggle missing.**
 
 ---
 
 ### P2-5: Text annotation formatting (bold, italic, underline)
-
-**Approach:**
-- When text tool is active, show formatting toggles in toolbar
-- Apply `TextStyle` (bold, italic, underline) to `StrokeTool.text` strokes
-- Store style info in the Stroke model's `textStyle` field
-
-**Complexity:** Easy
-**CPU impact:** Negligible
-**Dependencies:** None (uses built-in `TextStyle`)
+**Approach:** when text tool active show B/I/U toggles; apply `TextStyle` to text strokes; store in `Stroke.textStyle`.
+**Complexity:** Easy | **Dep:** none
+> 🔴 Not implemented (`Stroke.textStyle` field absent).
 
 ---
 
-### P2-6: Tags and categories (beyond notebooks/sections/pages)
-
-**Approach:**
-- Add `tags` table + `page_tags` junction table to drift schema
-- `Tag` model: `id`, `name`, `color`, `createdAt`
-- Filter pages by tag in home screen
-- Tag chips in page detail
-
-**Complexity:** Easy
-**CPU impact:** Negligible (indexed SQL joins)
-**Dependencies:** None (drift handles junction tables natively)
+### P2-6: Tags and categories
+**Approach:** `tags` + `page_tags` junction; `Tag{id,name,color,createdAt}`; filter by tag; chips.
+**Complexity:** Easy | **Deps:** none
+> 🟡 SCHEMA ONLY — tables exist but **no repo methods, no UI, dead code.**
 
 ---
 
 ### P2-7: Fuzzy search across all notes
-
-**Approach:**
-- Add SQLite FTS5 virtual table via drift: `CREATE VIRTUAL TABLE pages_fts USING fts5(content, title, tags)`
-- On every save, update the FTS index
-- Debounced search with ranking
-
-**Complexity:** Medium
-**CPU impact:** Low — FTS5 is highly optimized; Athlon 200GE handles hundreds of pages instantly
-**GitHub Actions:** Testable in CI (headless SQL)
-**Dependencies:** `drift` (already supports raw SQL for FTS5)
+**Approach:** SQLite FTS5 virtual table `pages_fts USING fts5(content, title, tags)`; update index on save; debounced ranking.
+**Complexity:** Medium | **Deps:** drift FTS5
+> 🔴 Title-`LIKE` only. No content/tag/FTS. (R1-22 adds content search first.)
 
 ---
 
-### P2-8: Batch operations (select multiple pages, move/delete)
-
-**Approach:**
-- Long-press or checkbox selection mode on page list
-- Multi-select with `Set<String>` of selected IDs
-- Batch move, batch delete, batch tag in single transaction
-
-**Complexity:** Easy
-**CPU impact:** Negligible
-**Dependencies:** None
+### P2-8: Batch operations (multi-select move/delete/tag)
+**Approach:** long-press/checkbox multi-select; batch move/delete/tag in one transaction using `Set<String>`.
+**Complexity:** Easy | **Dep:** none
+> 🔴 Not implemented.
 
 ---
 
 ### P2-9: Export page as PNG/PDF + share
-
-**Approach:**
-- PNG: `RepaintBoundary.toImage()` → `ui.Image.toByteData(format: png)` → save/share
-- PDF: `pdf` package to generate a PDF from the annotation canvas
-- ZIP: `archive` package to bundle all page exports
-
-**Complexity:** Medium
-**CPU impact:** Low (PNG rendering is GPU-accelerated)
-**Dependencies:** `pdf`, `archive`, `share_plus`
+**Approach:** `RepaintBoundary.toImage()`→PNG; `pdf` package → PDF from canvas; `archive` → ZIP bundle; `share_plus` share sheet.
+**Complexity:** Medium | **Deps:** `pdf`, `archive`, `share_plus`
+> ✅ Implemented (per-page PNG/PDF + notebook/section merged PDF + share).
 
 ---
 
 ### P2-10: Page templates (blank, lined, grid, dot grid)
-
-**Approach:**
-- `Template` model: `id`, `name`, `type` (blank/lined/grid/dot), `config` (JSON: line spacing, color, etc.)
-- Render template as `CustomPainter` background layer on canvas
-- User can select template when creating a new page
-
-**Complexity:** Easy
-**CPU impact:** Negligible (CustomPainter is cheap)
-**Dependencies:** None
+**Approach:** `Template{id,name,type,config}`; CustomPainter background; selectable on new page.
+**Complexity:** Easy | **Dep:** none
+> ✅ Implemented.
 
 ---
 
 ### P2-11: Word count / page statistics
-
-**Approach:**
-- For text pages: split by whitespace, count tokens
-- For annotated pages: count strokes + text annotations
-- Display in page detail header or a stats panel
-
-**Complexity:** Easy
-**CPU impact:** Negligible
-**Dependencies:** None
+**Approach:** token-count for text; stroke+annotation count for annotated; show in header/stats.
+**Complexity:** Easy | **Dep:** none
+> 🔴 Not implemented.
 
 ---
 
 ### P2-12: Version control features (checkpoints, diff, named versions)
-
-**Approach:**
-- Named checkpoints: user can name a version snapshot (already partially done with `label` field)
-- Diff between versions: compare serialized stroke JSON arrays (position, color, width, text)
-- For text annotations: compare `text` field + position
-- Visual diff: highlight changed regions
-
-**Complexity:** Hard (diff algorithm) / Easy (checkpoint naming)
-**CPU impact:** Low (JSON comparison is fast for typical stroke counts)
-**Dependencies:** `diff_match_patch` (Dart port) for text diffing
+**Approach:** named checkpoints (label field exists); diff serialized stroke JSON; visual diff highlight.
+**Complexity:** Hard (diff) / Easy (naming) | **Dep:** `diff_match_patch`
+> 🟡 autosave + restore + prune(100) exist; no diff/visual.
 
 ---
 
 ### P2-13: Lossless compression of version history
-
-**Approach:**
-- Delta encoding: store only diffs between versions instead of full snapshots
-- SQLite `COMPRESS`/`UNCOMPRESS` or Dart `zlib`/`gzip` for BLOB compression
-- Prune old versions: keep every Nth full snapshot + deltas in between
-- Run `VACUUM` periodically to reclaim space
-
-**Complexity:** Medium
-**CPU impact:** Low (zlib compression is fast on Athlon 200GE)
-**Dependencies:** `archive` (Dart, pure Dart)
+**Approach:** delta-encoding; `zlib`/`gzip`; prune policy; periodic `VACUUM`.
+**Complexity:** Medium | **Dep:** `archive`
+> 🔴 Not implemented.
 
 ---
 
 ### P2-14: Database optimization (VACUUM, compaction, pruning)
-
-**Approach:**
-- Add `PRAGMA optimize` on app startup
-- Configurable version retention policy (e.g., keep last 50 versions per page)
-- Background `VACUUM` after large deletions
-- Index on frequently queried columns
-
-**Complexity:** Medium
-**CPU impact:** Low (VACUUM is I/O-bound, not CPU-bound)
-**Dependencies:** None (drift supports raw SQL)
+**Approach:** `PRAGMA optimize` at startup; version retention policy; background `VACUUM`; indexes.
+**Complexity:** Medium | **Dep:** none
+> 🔴 Not implemented.
 
 ---
 
 ### P2-15: Dark mode auto-detection (system theme)
-
-**Approach:**
-- Add `ThemeMode.system` option alongside `light`, `dark`, `sepia`, `AMOLED`
-- Listen to `WidgetsBinding.instance.addObserver` for `didChangePlatformBrightness`
-- Persist preference in `SettingsService`
-
-**Complexity:** Easy
-**CPU impact:** Negligible
-**Dependencies:** None
+**Approach:** `ThemeMode.system` + `didChangePlatformBrightness`; persist in Settings.
+**Complexity:** Easy | **Dep:** none
+> 🔴 Manual themes only.
 
 ---
 
-## Phase P3 — "Data safety & multi-device"
+### Phase P3 — original section content
 
-### P3-1: E2E encryption for notes
+#### P3-1: E2E encryption for notes
+**Approach:** `cryptography`; Argon2id from password; AES-256-GCM; `flutter_secure_storage` for DEK (Android Keystore/iOS Keychain/DPAPI); Web Crypto API.
+**Complexity:** Medium | **Deps:** `cryptography`, `flutter_secure_storage`
+> 🟡 Exists (PBKDF2+AES-GCM + master password) but has Critical security flaws → **see R1-2..R1-4, R1-7.**
 
-**Integration Type:** Core Feature
-**Approach:**
-- Use existing `cryptography` package (already imported)
-- **Key derivation:** Argon2id from user password (built into `cryptography`)
-- **Encryption:** AES-256-GCM for note content (authenticated encryption)
-- **Key storage:** `flutter_secure_storage` (already imported) — Android Keystore / iOS Keychain / DPAPI on Windows
-- **Web:** Web Crypto API (built into `cryptography` package, works on HTTPS)
-- **Flow:** User sets a master password → derive KEK → encrypt DEK → store DEK encrypted in secure storage → encrypt each note's strokes JSON with DEK
+#### P3-2: Biometric authentication
+**Approach:** `flutter_biometric_auth_plus` (all platforms incl. WebAuthn); PIN fallback `flutter_auth_screen`; auto-lock on background; Argon2id PIN hash.
+**Complexity:** Easy–Medium | **Deps:** `flutter_biometric_auth_plus`, `flutter_auth_screen`
+> ✅ Exists (local_auth, master-password-cached) but **stores raw password** for biometrics → **R1-4.**
 
-**Complexity:** Medium
-**CPU impact:** Low (Argon2id is configurable; AES-GCM is hardware-accelerated on modern CPUs)
-**Dependencies:** `cryptography` (already imported), `flutter_secure_storage` (already imported)
+#### P3-3: Secure backup/export with encryption
+**Approach:** `.noteflow` ZIP (manifest + 5 tables + files/); AES-256-GCM w/ user password; Argon2id; decrypt→verify→extract.
+**Complexity:** Medium | **Deps:** `archive`, `cryptography`
+> ✅ Exists (ZIP + AES when master pw) but plaintext when no pw + **Zip-Slip** → **R1-5.**
 
----
+#### P3-4: LocalSend integration (P2P)
+**Approach:** LocalSend REST over HTTPS port 53317; Dart client; UDP discovery + upload/download over LAN.
+**Complexity:** Medium | **Dep:** `http`
+> 🟡 Custom P2P exists; unauthenticated cleartext → **R1-11.**
 
-### P3-2: Biometric authentication (fingerprint / face)
+#### P3-5: PDF24-style PDF tools (merge, split, compress)
+**Approach:** native `pdf_utils`/`pdf_manipulator`; PDF tools in import/export menu.
+**Complexity:** Medium | **Deps:** `pdf_utils`/`pdf_manipulator`
+> 🔴 Not implemented.
 
-**Integration Type:** Core Feature
-**Approach:**
-- `flutter_biometric_auth_plus` — FOSS, works on all 6 platforms including web (WebAuthn)
-- PIN fallback using `flutter_auth_screen` (pure UI, no business logic)
-- Auto-lock on app background (`WidgetsBindingObserver` + `AppLifecycleListener`)
-- Store PIN hash with Argon2id in `flutter_secure_storage`
+#### P3-6: OCR with Tesseract (searchable notes)
+**Approach:** `tesseract_ocr` + `eng.traineddata` assets; background isolate; store `textContent`; search via FTS5.
+**Complexity:** Medium | **Dep:** `tesseract_ocr`
+> 🟡 **FAKE** — hard-coded strings for "invoice"/"receipt"; simulated downloads → **R1-24.**
 
-**Complexity:** Easy–Medium
-**CPU impact:** Negligible
-**Dependencies:** `flutter_biometric_auth_plus`, `flutter_auth_screen`
+#### P3-7: Markdown + LaTeX rendering
+**Approach:** `flutter_markdown_plus`; `ratex_flutter` (FFI, no WebView).
+**Complexity:** Easy | **Deps:** `flutter_markdown_plus`, `ratex_flutter`
+> ✅ Partially — Markdown preview implemented (P3-7); LaTeX pending.
 
----
+#### P3-8: LibreOffice DOCX→PDF
+**Approach:** `libre_office_kit_converter_plugin`; DOCX/XLSX/PPTX→PDF offline; +600 MB only on Android/iOS.
+**Complexity:** Medium–Hard | **Dep:** `libre_office_kit_converter_plugin`
+> 🔴 Not real (DOCX handled only via naive `<w:t>` regex→markdown).
 
-### P3-3: Secure backup/export with encryption
+#### P3-9: Bitwarden vault integration
+**Approach:** Vault Management (`bw serve`) for keys; `url_launcher` to open Bitwarden.
+**Complexity:** Medium–Hard | **Dep:** `url_launcher`
+> 🔴 Not implemented.
 
-**Integration Type:** Core Feature
-**Approach:**
-- Export: `.noteflow` ZIP containing (manifest.json + 5 tables JSON + files/)
-- Encrypt ZIP with AES-256-GCM using a user-chosen password
-- Derive key via Argon2id from password
-- Import: decrypt → verify → extract → load into database
+#### P3-10: 7-Zip / archive compression for exports
+**Approach:** `archive` (ZIP/gzip/tar); `flutter_7zip` desktop for 7z.
+**Complexity:** Easy | **Dep:** `archive`
+> 🟡 zip only.
 
-**Complexity:** Medium
-**CPU impact:** Low (zlib + AES-GCM is fast on Athlon 200GE)
-**Dependencies:** `archive` (already used for ZIP), `cryptography` (already imported)
-
----
-
-### P3-4: LocalSend integration (peer-to-peer sharing)
-
-**Integration Type:** Core Feature (Native REST Client)
-**Approach:**
-- LocalSend uses a documented REST API over HTTPS on port 53317
-- Implement a client in Dart using `http` package
-- Key endpoints: discovery (UDP multicast), upload, download
-- Share notes as JSON or exported files to other devices on the same network
-
-**Complexity:** Medium
-**CPU impact:** Negligible
-**Dependencies:** `http` (already a transitive dependency)
+#### P3-11: HandBrake-style video compression
+**Approach:** `video_compress`/`v_video_compressor` (NOT HandBrake).
+**Complexity:** Easy | **Dep:** `video_compress`
+> 🔴 Not implemented.
 
 ---
 
-### P3-5: PDF24-style PDF tools (merge, split, compress)
+### Phase P4 — original section content (preserved)
 
-**Integration Type:** Core Feature (Native Library)
-**Approach:**
-- Implement natively in Flutter — do NOT depend on PDF24's web tools
-- `pdf_utils` or `pdf_manipulator` package for merge/split/compress
-- Add a "PDF tools" option in the import/export menu
+#### P4-1: Diagramming & mind maps
+**Approach:** `flutter_flow_chart`; Mermaid.js via WebView; `drawflow` JS via WebView.
+**Complexity:** Medium–Hard | **Deps:** `flutter_flow_chart`, WebView | 🔴 later
 
-**Complexity:** Medium
-**CPU impact:** Low–Medium (PDF manipulation is CPU-bound but manageable)
-**Dependencies:** `pdf_utils` or `pdf_manipulator`
+#### P4-2: Home screen widgets
+**Approach:** `home_widget`, `quick_actions`; recent title + quick-create; ShortcutManager / WidgetKit.
+**Complexity:** Hard | **Deps:** `home_widget`, `quick_actions`
+> Deferred (iOS native required).
 
----
+#### P4-3: Passkey-based authentication (WebAuthn/FIDO2)
+**Approach:** `passkeys`; PRF → encryption keys; needs relying-party server.
+**Complexity:** Hard | **Deps:** `passkeys`
+> Deferred (needs backend).
 
-### P3-6: OCR with Tesseract (searchable notes from images/PDFs)
+#### P4-4: Self-hosted sync server (Rust axum)
+**Approach:** axum LWW JSON sync as designed in P3-4; deploy on VPS; dart outbox+pull; zero-knowledge.
+**Complexity:** Hard | **Deps:** Rust toolchain.
 
-**Integration Type:** Optional Plugin
-**Approach:**
-- `tesseract_ocr` package for on-device OCR
-- Bundle `eng.traineddata` in app assets
-- On import of images/PDFs, run OCR in background isolate
-- Store extracted text as a searchable `textContent` field on pages
-- Full-text search uses the FTS5 index (P2-7)
-
-**Complexity:** Medium
-**CPU impact:** Medium — OCR is CPU-intensive but runs in background isolate. Athlon 200GE can handle it for typical note-sized images.
-**GitHub Actions:** Headless — no OCR testing in CI (requires image assets)
-**Dependencies:** `tesseract_ocr`
+#### P4-5: Web collaborative editing
+**Approach:** `dart_automerge` FFI CRDT; require P4-4. **Deferred until FFI stable.**
+**Complexity:** Hard.
 
 ---
 
-### P3-7: Markdown + LaTeX rendering for notes
+### Plugin / integration feasibility summary
 
-**Integration Type:** Core Feature
-**Approach:**
-- `flutter_markdown_plus` for Markdown rendering
-- `ratex_flutter` for LaTeX (native Dart FFI, no WebView, best performance)
-- Users can write notes in Markdown/LaTeX and preview rendered output
-
-**Complexity:** Easy
-**CPU impact:** Negligible (rendering is GPU-accelerated)
-**Dependencies:** `flutter_markdown_plus`, `ratex_flutter`
-
----
-
-### P3-8: LibreOffice document conversion (DOCX → PDF)
-
-**Integration Type:** Optional Plugin
-**Approach:**
-- `libre_office_kit_converter_plugin` for offline DOCX/XLSX/PPTX → PDF conversion
-- Converts documents to PDF, then user can annotate them in Noteflow
-- **Note:** LibreOfficeKit adds ~600 MB to app size — only bundle on Android/iOS, not web/desktop
-
-**Complexity:** Medium–Hard (large native dependency)
-**CPU impact:** Medium (document conversion is CPU-intensive)
-**Dependencies:** `libre_office_kit_converter_plugin`
-
----
-
-### P3-9: Bitwarden vault integration (password-protected notes)
-
-**Integration Type:** External Integration
-**Approach:**
-- Use Bitwarden's Vault Management API (`bw serve` CLI) for programmatic access
-- Store encryption keys for protected notes in Bitwarden
-- `url_launcher` to open Bitwarden for copy/paste workflows
-- **Note:** Full API integration requires `bw serve` running locally — optional, advanced feature
-
-**Complexity:** Medium–Hard
-**CPU impact:** Negligible
-**Dependencies:** `url_launcher` (already a transitive dependency)
-
----
-
-### P3-10: 7-Zip / archive compression for exports
-
-**Integration Type:** Core Feature
-**Approach:**
-- `archive` package (pure Dart) for ZIP/gzip/tar creation
-- Use for encrypted backup exports and batch file sharing
-- For 7z format specifically: `flutter_7zip` on desktop platforms only
-
-**Complexity:** Easy
-**CPU impact:** Low (zlib is fast)
-**Dependencies:** `archive` (already used)
-
----
-
-### P3-11: HandBrake-style video compression (for video notes)
-
-**Integration Type:** Declined (Replaced by Native Light Compressor)
-**Approach:**
-- `video_compress` or `v_video_compressor` for in-app video compression
-- **Not** HandBrake integration (no CLI/API available)
-- Useful if users attach video recordings to notes
-
-**Complexity:** Easy
-**CPU impact:** Medium (video encoding is CPU-intensive, runs in isolate)
-**Dependencies:** `video_compress`
-
----
-
-## Phase P4 — "World-class"
-
-### P4-1: Diagramming & mind maps
-
-**Approach:**
-- `flutter_flow_chart` for flowcharts
-- Mermaid.js via WebView for sequence/class/state diagrams
-- `drawflow` JavaScript library via WebView for advanced diagramming
-
-**Complexity:** Medium–Hard
-**CPU impact:** Low (rendering is GPU-accelerated)
-**Dependencies:** `flutter_flow_chart`, WebView
-
----
-
-### P4-2: Home screen widgets (Android shortcuts, iOS widgets)
-
-**Approach:**
-- `home_widget` for cross-platform home screen widgets
-- Show recent page title, last edited time, quick-create shortcut
-- Android: `ShortcutManager` for pinned shortcuts
-- iOS: `WidgetKit` via `home_widget`
-
-**Complexity:** Hard (especially iOS widgets, requires native Swift code)
-**CPU impact:** N/A (platform feature)
-**Dependencies:** `home_widget`, `quick_actions`
-
----
-
-### P4-3: Passkey-based authentication (WebAuthn/FIDO2)
-
-**Approach:**
-- `passkeys` package for cross-platform passkey support
-- PRF extension to derive encryption keys from passkeys
-- Requires a relying party server (can be self-hosted cheaply)
-
-**Complexity:** Hard (requires backend server)
-**CPU impact:** Negligible (client-side)
-**Dependencies:** `passkeys`
-
----
-
-### P4-4: Self-hosted sync server (Rust axum)
-
-**Approach:**
-- Rust axum server with LWW JSON sync (as designed in P3-4)
-- Deploy on cheap VPS or self-hosted hardware
-- Client-side: `dart` HTTP client with outbox + pull pattern
-- Zero-knowledge: server never sees plaintext (E2E encrypted)
-
-**Complexity:** Hard (requires Rust backend + Flutter client)
-**CPU impact:** N/A (server-side)
-**Dependencies:** Rust toolchain (runs on GitHub Actions for server build)
-
----
-
-### P4-5: Web collaborative editing (deferred until Automerge FFI is stable)
-
-**Approach:**
-- `dart_automerge` FFI for CRDT-based concurrent editing
-- Requires a sync server (P4-4)
-- **Deferred** until Automerge FFI is production-ready
-
-**Complexity:** Hard
-**CPU impact:** N/A (server-side)
-**Dependencies:** `dart_automerge`
-
----
-
-## Plugin / integration feasibility summary
-
-| Tool | Integration Type | Integration Strategy | Recommendation |
+| Tool | Integration Type | Strategy | Recommendation |
 |---|---|---|---|
-| **LocalSend** | **Core Feature** | Native Dart REST client using `http` over local WiFi. | **Highly Recommended**: Core feature for P2P local note sharing without cloud dependencies. |
-| **Markdown & LaTeX** | **Core Feature** | Rendered inline via `flutter_markdown_plus` and `ratex_flutter` (FFI). | **Highly Recommended**: Core feature for academic, math, developer, and code-based notes. |
-| **PDF24 (PDF Tools)** | **Core Feature** | Natively merge/split using pure Dart `pdf` or `pdf_utils` libraries. | **Recommended**: Core feature for manipulating slides, lecture notes, or combined pages. |
-| **Tesseract OCR** | **Optional Plugin** | Loaded dynamically on demand with bundled engine binaries and language data. | **Recommended as Plugin**: Dynamically loaded only when needed to keep the base app binary lightweight. |
-| **LibreOffice** | **Optional Plugin** | `libre_office_kit_converter` plugin installed dynamically or only on mobile/desktop. | **Recommended as Plugin**: LibreOffice binaries add >600MB, so keeping it optional is critical. |
-| **Bitwarden** | **External Integration** | Launch vault apps or programmatic local API (`bw serve`) via `url_launcher`. | **Recommended as Integration**: Delegate secure password storage to dedicated managers. |
-| **7-Zip** | **Core Feature** | Bundled ZIP/Tar compression via pure Dart `archive` package. | **Highly Recommended**: Core feature for database exports and backups. |
-| **ProtonVPN** | **Declined** | No integration planned. | VPN utility is out of scope for a local-first note-taking app. |
-| **HandBrake** | **Declined** | No integration planned; use native light compressor. | Video notes can use standard `video_compress` rather than bulky external codecs. |
+| LocalSend | Core Feature | Native Dart REST client over local WiFi | **High rec.** P2P local sharing, no cloud |
+| Markdown & LaTeX | Core Feature | `flutter_markdown_plus` + `ratex_flutter` | **High rec.** academic/dev notes |
+| PDF24 (PDF tools) | Core Feature | pure-Dart `pdf`/`pdf_utils` merge/split | **Rec.** slides, mixed pages |
+| Tesseract OCR | Optional Plugin | on-demand engine + language data | **Rec. as Plugin** keep binary light |
+| LibreOffice | Optional Plugin | `libre_office_kit_converter` on mobile/desktop | **Rec. as Plugin** >600 MB |
+| Bitwarden | External Integration | `url_launcher`/`bw serve` | **Rec. as Integration** |
+| 7-Zip | Core Feature | pure-Dart `archive` | **High rec** exports/backups |
+| ProtonVPN | Declined | none | VPN out of scope |
+| HandBrake | Declined | none; `video_compress` | Out of scope |
 
 ---
 
-## GitHub Actions optimization notes
+### GitHub Actions optimization notes (preserved)
+Heavy CI-only: PDF render tests, OCR processing, Release APK build (**+ release keystore secret**), Web build, DB migration tests, version diff/compression tests. Too heavy for CPU, use CI: large PDFs, video compression, large OCR batches, release APK signing.
 
-Heavy tasks that should run in CI (not locally):
-- **PDF rendering tests** — headless, no display needed
-- **OCR processing** — run in CI with test images
-- **Release APK build** — `flutter build apk --release`
-- **Web build** — `flutter build web --profile`
-- **Database migration tests** — headless Dart
-- **Version diff/compression tests** — pure Dart
+### Dependency budget (FOSS/free only)
+`drift`+`drift_flutter` (MIT) · `pdfrx` (BSD-3) · `cryptography` (BSD-3) · `flutter_secure_storage` (MIT) · `flex_color_picker` (MIT) · `flutter_markdown_plus` (MIT) · `ratex_flutter` (MIT) · `tesseract_ocr` (Apache-2.0) · `archive` (MIT) · `pdf` (MIT) · `share_plus` (MIT) · `flutter_biometric_auth_plus` (MIT) · `flutter_auth_screen` (MIT) · `home_widget` (MIT) · `http` (MIT) · `video_compress` (MIT) · `diff_match_patch` (Apache-2.0) · `file_picker` (MIT) · `intl` (BSD-3) · `uuid` (MIT).
 
-Tasks that are too heavy for this CPU and should use CI:
-- **PDF rendering of large documents** (50+ pages)
-- **Video compression** (CPU-intensive)
-- **OCR on large image batches**
-- **Release APK signing** (needs keystore, not local)
+### Deferred (explicitly)
+Cloud OCR (needs server) · Web collab editing (Automerge FFI unstable) · iOS (needs Mac/Xcode) · SQLCipher full-DB (unsupported on web) · `flutter_rust_bridge` (until sync needed) · Passphrase recovery (needs key escrow server) · ProtonVPN · HandBrake (use `video_compress`).
 
 ---
 
-## Dependency budget (FOSS/free only)
-
-All packages below are free for commercial use and open-source:
-
-| Package | License | Purpose |
-|---|---|---|
-| `drift` + `drift_flutter` | MIT | SQLite database |
-| `pdfrx` | BSD-3 | PDF rendering |
-| `cryptography` | BSD-3 | Encryption (AES-256-GCM, Argon2id) |
-| `flutter_secure_storage` | MIT | Key storage |
-| `flex_color_picker` | MIT | Color picker with recent colors |
-| `flutter_markdown_plus` | MIT | Markdown rendering |
-| `ratex_flutter` | MIT | LaTeX rendering |
-| `tesseract_ocr` | Apache 2.0 | On-device OCR |
-| `archive` | MIT | ZIP/gzip/tar compression |
-| `pdf` | MIT | PDF generation |
-| `share_plus` | MIT | OS share sheet |
-| `flutter_biometric_auth_plus` | MIT | Biometric auth (all platforms incl. web) |
-| `flutter_auth_screen` | MIT | PIN entry UI |
-| `home_widget` | MIT | Home screen widgets |
-| `http` | MIT | HTTP client (for LocalSend, Bitwarden API) |
-| `video_compress` | MIT | Video compression |
-| `diff_match_patch` | Apache 2.0 | Text diffing |
-| `file_picker` | MIT | File picking |
-| `intl` | BSD-3 | Date/time formatting |
-| `uuid` | MIT | UUID generation |
+## Open questions / edge cases
+- **Multi-page doc model** — normalize `pageIndex` & navigation into a `Document`/`NotePage` grouping; confirm schema migration.
+- **Autosave cadence** with many separate pages importing; throttling.
+- **Backup format versioning** to remain Zip-Slip-safe across older backups.
+- **CI signing** — add encrypted keystore secret to GitHub Actions, set `release` signing in workflow.
 
 ---
-
-## Implementation order (recommended)
-
-1. **P2-1** Multipage PDF import (highest user impact, medium complexity)
-2. **P2-3** Markdown support (easy, high value)
-3. **P2-4** Custom brushes + color picker (medium, visible quality improvement)
-4. **P2-6** Tags (easy, organizes notes beyond hierarchy)
-5. **P2-7** Fuzzy search (medium, makes the app feel professional)
-6. **P2-9** Export + share (medium, enables real-world usage)
-7. **P3-1** E2E encryption (medium, critical for privacy-focused positioning)
-8. **P3-2** Biometric auth (easy, adds security feel)
-9. **P3-3** Encrypted backup (medium, data safety)
-10. **P3-6** OCR (medium, makes notes searchable)
-11. **P3-7** Markdown + LaTeX (easy, academic appeal)
-12. **P4-1** Diagramming (medium, premium feel)
-13. **P4-2** Home screen widgets (hard, platform integration)
-14. **P4-4** Self-hosted sync (hard, multi-device)
-
----
-
-## Deferred (explicitly)
-
-- Cloud OCR (requires server infrastructure)
-- Web collaborative editing (deferred until Automerge FFI is stable)
-- iOS (requires Mac + Xcode, not available in this environment)
-- SQLCipher full-DB encryption (web doesn't support it; use note-level E2E instead)
-- Custom Rust via `flutter_rust_bridge` (deferred until sync server is needed)
-- Passphrase recovery (requires secure server-side key escrow)
-- ProtonVPN integration (no meaningful API; use generic VPN instead)
-- HandBrake integration (use native `video_compress` instead)
