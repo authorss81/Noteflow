@@ -8,6 +8,7 @@ import 'screens/home_screen.dart';
 import 'widgets/lock_screen.dart';
 import 'services/settings_service.dart';
 import 'state/app_state.dart';
+import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +35,10 @@ class NoteflowApp extends StatelessWidget {
           return MaterialApp(
             title: 'Noteflow',
             debugShowCheckedModeBanner: false,
+            // R1-31: the theme was never bound before — all 4 modes are
+            // computed from AppTheme.build and applied directly.
+            theme: AppTheme.build(app.theme),
+            themeMode: ThemeMode.light,
             home: _Root(app: app),
           );
         },

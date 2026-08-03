@@ -64,7 +64,7 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 | ID | Sev | Bug | Fix | File:line |
 |---|---|---|---|---|
 | R1-30 | 🔴 Critical | ✅ done — **Master Password can NEVER be enabled.** `_uuid()` returns a 10-char base36 string; `.codeUnits.sublist(0,16)` on a 10-element list throws `RangeError`, swallowed by `catch` → `setMasterPassword` always `false`. Whole E2E + lock unreachable. | CSPRNG 16-byte salt, base64 encode/decode | `app_state.dart:296,306-320` |
-| R1-31 | 🔴 Critical | **Theming is wired to nothing.** `MaterialApp` sets **no `theme:`/`darkTheme:`/`themeMode:`** — `AppTheme`/`PaperPalette` unused; the 4 theme modes never change the UI; theme menus are decorative. | Bind `theme`, `darkTheme`, `themeMode` in `main.dart` | `main.dart:34-40`, `app_theme.dart` |
+| R1-31 | 🔴 Critical | ✅ done — **Theming is wired to nothing.** `MaterialApp` sets **no `theme:`/`darkTheme:`/`themeMode:`** — `AppTheme`/`PaperPalette` unused; the 4 theme modes never change the UI; theme menus are decorative. | Bind `theme`, `darkTheme`, `themeMode` in `main.dart` | `main.dart:34-40`, `app_theme.dart` |
 | R1-32 | 🔴 Critical | **Cross-check R1-3/R1-2 are live:** the salt bug (this R1-1) also breaks `R1-3`'s CSPRNG fix silently. | complete CSPRNG + KDF fix | (see R1-1/2/3) |
 
 ### R1-HIGH (must fix before marketing "private")
