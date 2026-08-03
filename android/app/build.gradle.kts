@@ -72,6 +72,18 @@ android {
             )
         }
     }
+
+    // ABI splits: produce one lean APK per CPU architecture instead of one
+    // fat APK bundling all native libs. A modern arm64-v8a phone only needs
+    // the arm64 APK (~40-50% smaller than the universal build).
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false  // skip universal fat APK; use arm64 for most devices
+        }
+    }
 }
 
 kotlin {
