@@ -43,12 +43,7 @@ jobs:
         run: |
           if [ -n "${{ secrets.ANDROID_KEYSTORE }}" ] && [ -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.ANDROID_KEY_ALIAS }}" ] && [ -n "${{ secrets.ANDROID_KEY_PASSWORD }}" ]; then
             echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > android/key.jks
-            cat > android/key.properties <<EOF
-            storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-            keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-            keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-            storeFile=$GITHUB_WORKSPACE/android/key.jks
-            EOF
+            printf 'storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}\nkeyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}\nkeyAlias=${{ secrets.ANDROID_KEY_ALIAS }}\nstoreFile=%s/android/key.jks\n' "$GITHUB_WORKSPACE" > android/key.properties
             echo "signing_enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "signing_enabled=false" >> "$GITHUB_OUTPUT"
