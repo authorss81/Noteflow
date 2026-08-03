@@ -1874,7 +1874,14 @@ class _PageTile extends StatelessWidget {
                             );
                             final strokes = await app.repo.strokesFor(page.id);
                             final strokesJson = app.repo.encodeStrokes(strokes);
-                            final success = await app.p2pShare.sendNote(peer['ip']!, page.title, strokesJson);
+                            // R1-11: encrypt the payload when this device has a
+                            // master password (no plaintext on the LAN).
+                            final success = await app.p2pShare.sendNote(
+                              peer['ip']!,
+                              page.title,
+                              strokesJson,
+                              encryptionKey: app.repo.encryptionKey,
+                            );
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(

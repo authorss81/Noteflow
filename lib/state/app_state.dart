@@ -119,14 +119,32 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _onReceiveP2pNote(String title, String strokesJson) async {
+  /// Handles an incoming P2P note. Rejects while the vault is locked (no DEK
+  /// in memory) and decrypts E2E payloads with the local DEK (R1-11). Returns
+  /// whether the note was accepted.
+  Future<bool> _onReceiveP2pNote(
+      String title, String strokesJson, bool encrypted) async {
+    if (!_authenticated) return false;
     try {
-      final p = await addPage(title: title);
-      final strokes = _repo.decodeStrokes(strokesJson);
+      var finalTitle = title;
+      var finalJson = strokesJson;
+      if (encrypted) {
+        final key = _repo.encryptionKey;
+        if (key == null) return false;
+        // GCM auth failure here means the two devices don't share a DEK
+        // (different master passwords) — reject instead of storing garbage.
+        finalTitle = await EncryptionService.decrypt(title, key);
+        finalJson = await EncryptionService.decrypt(strokesJson, key);
+      }
+      final p = await addPage(title: finalTitle);
+      final strokes = _repo.decodeStrokes(finalJson);
       await _repo.saveStrokes(p.id, strokes);
-      p2pNotification = "Received note '$title' from peer!";
+      p2pNotification = "Received note '$finalTitle' from peer!";
       notifyListeners();
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
