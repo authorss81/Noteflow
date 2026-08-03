@@ -40,8 +40,9 @@ class _MarkdownPreviewScreenState extends State<MarkdownPreviewScreen> {
     try {
       final file = File(path);
       if (await file.exists()) {
-        final bytes = await file.readAsBytes();
-        final import = ImportService();
+        final import = ImportService(
+            keyProvider: () => widget.autosave.repo.encryptionKey);
+        final bytes = await import.readDecryptedBytes(path);
         setState(() {
           _text = import.decodeText(bytes);
           _loading = false;

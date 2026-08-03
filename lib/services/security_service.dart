@@ -49,6 +49,30 @@ class SecurityService {
     return SecretKeyData(base64Decode(dek ?? ''));
   }
 
+  /// Persists a DEK in the OS keystore/keychain (R1-7). Used to keep the
+  /// random data-encryption key available for biometric unlock without ever
+  /// storing the human-readable master password.
+  Future<void> storeDek(SecretKey dek) async {
+    final dekBytes = await dek.extractBytes();
+    await _storage.write(key: _dekKey, value: base64Encode(dekBytes));
+    _encryptionEnabled = true;
+  }
+
+  /// Reads the DEK from the OS keystore/keychain. Returns `null` when none
+  /// has been stored.
+  Future<SecretKey?> readDek() async {
+    final dekB64 = await _storage.read(key: _dekKey);
+    if (dekB64 == null) return null;
+    return SecretKeyData(base64Decode(dekB64));
+  }
+
+  /// Removes the DEK from the OS keystore/keychain.
+  Future<void> clearDek() async {
+    await _storage.delete(key: _dekKey);
+    await _storage.delete(key: _lockedKey);
+    _encryptionEnabled = false;
+  }
+
   /// Encrypts bytes with AES-256-GCM using the vault DEK.
   /// Returns `null` if encryption is not enabled.
   /// Envelope: nonce(12) + ciphertext + mac(16).

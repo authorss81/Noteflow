@@ -53,25 +53,25 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 ### R1-CRITICAL SECURITY (must fix before any release)
 | ID | Sev | Fix | File:line |
 |---|---|---|---|
-| R1-1 | 🔴 Critical | **Stop signing release with debug keystore** → private release keystore via `key.properties`, keep out of VCS | `android/app/build.gradle.kts:28-32` |
-| R1-2 | 🔴 Critical | Raise KDF to **Argon2id** (≥19 MiB, ≥2 passes) or PBKDF2 ≥600,000; track it in metadata | `encryption_service.dart:11` |
-| R1-3 | 🔴 Critical | Use **CSPRNG salt** (not timestamp `codeUnits`) | `app_state.dart:296,306,328` |
-| R1-4 | 🔴 Critical | **No master-password-in-keystore for biometrics** → biometric-bound key wrapping the DEK | `app_state.dart:348` |
-| R1-5 | 🔴 Critical | **Zip-Slip fix in backup restore** — sanitize/`canonicalize/allowlist archive entry names, block `..`/absolute | `home_screen.dart:464-478` |
-| R1-6 | 🔴 Critical | Enable **R8/ProGuard `isMinifyEnabled` + `shrinkResources`** + `proguard-rules.pro` | `android/app/build.gradle.kts` |
+| R1-1 | 🔴 Critical | ✅ done — **Stop signing release with debug keystore** → private release keystore via `key.properties`, keep out of VCS | `android/app/build.gradle.kts:28-32` |
+| R1-2 | 🔴 Critical | ✅ done — Raise KDF to **Argon2id** (≥19 MiB, ≥2 passes) or PBKDF2 ≥600,000; track it in metadata | `encryption_service.dart:11` |
+| R1-3 | 🔴 Critical | ✅ done — Use **CSPRNG salt** (not timestamp `codeUnits`) | `app_state.dart:296,306,328` |
+| R1-4 | 🔴 Critical | ✅ done — **No master-password-in-keystore for biometrics** → biometric-bound key wrapping the DEK | `app_state.dart:348` |
+| R1-5 | 🔴 Critical | ✅ done — **Zip-Slip fix in backup restore** — sanitize/`canonicalize/allowlist archive entry names, block `..`/absolute | `home_screen.dart:464-478` |
+| R1-6 | 🔴 Critical | ✅ done — Enable **R8/ProGuard `isMinifyEnabled` + `shrinkResources`** + `proguard-rules.pro` | `android/app/build.gradle.kts` |
 
 ### R1-BLOCKING BUGS (silently dead features — add to do-now priority)
 | ID | Sev | Bug | Fix | File:line |
 |---|---|---|---|---|
-| R1-30 | 🔴 Critical | **Master Password can NEVER be enabled.** `_uuid()` returns a 10-char base36 string; `.codeUnits.sublist(0,16)` on a 10-element list throws `RangeError`, swallowed by `catch` → `setMasterPassword` always `false`. Whole E2E + lock unreachable. | CSPRNG 16-byte salt, base64 encode/decode | `app_state.dart:296,306-320` |
+| R1-30 | 🔴 Critical | ✅ done — **Master Password can NEVER be enabled.** `_uuid()` returns a 10-char base36 string; `.codeUnits.sublist(0,16)` on a 10-element list throws `RangeError`, swallowed by `catch` → `setMasterPassword` always `false`. Whole E2E + lock unreachable. | CSPRNG 16-byte salt, base64 encode/decode | `app_state.dart:296,306-320` |
 | R1-31 | 🔴 Critical | **Theming is wired to nothing.** `MaterialApp` sets **no `theme:`/`darkTheme:`/`themeMode:`** — `AppTheme`/`PaperPalette` unused; the 4 theme modes never change the UI; theme menus are decorative. | Bind `theme`, `darkTheme`, `themeMode` in `main.dart` | `main.dart:34-40`, `app_theme.dart` |
 | R1-32 | 🔴 Critical | **Cross-check R1-3/R1-2 are live:** the salt bug (this R1-1) also breaks `R1-3`'s CSPRNG fix silently. | complete CSPRNG + KDF fix | (see R1-1/2/3) |
 
 ### R1-HIGH (must fix before marketing "private")
-7. Wire `SecurityService` (Keystore DEK) — currently **dead code**; E2E uses master-password-derived KEK directly. (`security_service.dart:33`, `app_state.dart:22`)
-8. Remove plaintext verifier oracle; use a memory-hard hash stored inside the encrypted wrapper. (`app_state.dart:301-311`)
-9. Automatically lock on `AppLifecycleState.resumed` + inactivity timeout; clear `_repo.encryptionKey` on background. (`main.dart:37`, `editor_screen.dart:55-63`)
-10. Encrypt metadata (titles, notebook names, tags) + imported source files, not just `strokesJson`. (`database.dart:43-62`, `import_service.dart:38`)
+7. ✅ done — Wire `SecurityService` (Keystore DEK) — was **dead code**; DEK now persisted/read via keystore-backed `SecurityService` (R1-7/R1-4). (`security_service.dart`, `app_state.dart:22`)
+8. ✅ done — Remove plaintext verifier oracle; wrong password detected via DEK-unwrap GCM auth failure. (`app_state.dart:301-311`)
+9. ✅ done — Automatically lock on background + inactivity timeout; `_repo.encryptionKey` cleared on background. (`main.dart:37`, `app_state.dart`)
+10. ✅ done — Encrypt metadata (titles, notebook names, tags) + imported source files at rest; legacy plaintext migrated on first unlock; search now in-memory. (`repository.dart`, `database.dart`, `import_service.dart`)
 11. Harden P2P: no wildcard `Access-Control-Allow-Origin: *`, bind loopback or require PIN/peer handshake, size cap on body, **no cleartext HTTP (blocked on Android 9+)**, no plaintext note transfer. Add `networkSecurityConfig`/`usesCleartextTraffic` for LAN. (`p2p_share_service.dart:19-52`)
 12. Add `INTERNET` permission to **main** manifest (currently debug-only → P2P silently fails in release), `USE_BIOMETRIC` via `local_auth`. (`android/app/src/*/AndroidManifest.xml`)
 13. **Placeholder `applicationId`/`namespace` `com.yourname.noteflow`** never replaced — must be globally unique before upload. (`android/app/build.gradle.kts:8,19`, `MainActivity.kt`)
@@ -81,7 +81,7 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 17. **`allowBackup`/metadata plaintext** also breaks Play Data-safety honesty (see R1-10/14).
 
 ### R1-LOW (fix when convenient)
-18. Sanitize LIKE `%`/`_` in search (`database.dart:190-195`); debounce search ~300 ms (`home_screen.dart:1503`).
+18. ✅ done (moot) — Sanitize LIKE `%`/`_` in search — search is now in-memory title matching (R1-10), no SQL LIKE. Debounce search ~300 ms (`home_screen.dart:1503`).
 19. Restrict remote images in Markdown (`imageBuilder`) to stop external fetches. (`markdown_preview_screen.dart:97`)
 20. Don't auto-copy note/OCR text to global clipboard; clear after delay. (`home_screen.dart:2044`)
 21. Sanitize imported filenames for path traversal; only persist original PDF bytes if actually referenced. (`import_service.dart:37`, `home_screen.dart:198`)

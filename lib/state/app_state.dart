@@ -1,9 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../data/repository.dart';
 import '../models/note_models.dart';
@@ -12,6 +11,7 @@ import '../services/settings_service.dart';
 import '../services/encryption_service.dart';
 import '../services/p2p_share_service.dart';
 import '../services/plugin_loader_service.dart';
+import '../services/security_service.dart';
 import '../theme/app_theme.dart';
 
 /// Central app state: theme, active notebook/section/page, and navigation.
@@ -23,7 +23,9 @@ class AppState extends ChangeNotifier {
   late final PluginLoaderService _pluginLoader;
   PluginLoaderService get pluginLoader => _pluginLoader;
 
-  final _secureStorage = const FlutterSecureStorage();
+  /// OS-keystore-backed security layer (R1-7). The random DEK used for E2E
+  /// content encryption is persisted through this service.
+  final _security = SecurityService();
   final _p2pShare = P2pShareService();
 
   P2pShareService get p2pShare => _p2pShare;
@@ -129,6 +131,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _inactivityTimer?.cancel();
     _p2pShare.dispose();
     super.dispose();
   }
@@ -326,6 +329,7 @@ class AppState extends ChangeNotifier {
 
       _repo.encryptionKey = dek;
       _authenticated = true;
+      await _maybeMigrateLegacyData();
       notifyListeners();
       return true;
     } catch (_) {
@@ -346,6 +350,7 @@ class AppState extends ChangeNotifier {
 
       _repo.encryptionKey = dek;
       _authenticated = true;
+      await _maybeMigrateLegacyData();
       notifyListeners();
       return true;
     } catch (_) {
@@ -359,13 +364,12 @@ class AppState extends ChangeNotifier {
       if (!verify || _repo.encryptionKey == null) return false;
 
       if (enabled) {
-        // Store only the random DEK (not the human-readable master password).
-        // flutter_secure_storage keeps it in the OS keystore/keychain.
-        final dekBytes = await _repo.encryptionKey!.extractBytes();
-        await _secureStorage.write(key: 'master_dek', value: base64Encode(dekBytes));
+        // Store only the random DEK (not the human-readable master password)
+        // in the OS keystore/keychain via SecurityService (R1-7).
+        await _security.storeDek(_repo.encryptionKey!);
         await _settings.prefs.setBool('biometric_auth_enabled', true);
       } else {
-        await _secureStorage.delete(key: 'master_dek');
+        await _security.clearDek();
         await _settings.prefs.setBool('biometric_auth_enabled', false);
       }
       notifyListeners();
@@ -378,11 +382,11 @@ class AppState extends ChangeNotifier {
   Future<bool> verifyBiometricsAndUnlock() async {
     if (!biometricEnabled) return false;
     try {
-      final dekB64 = await _secureStorage.read(key: 'master_dek');
-      if (dekB64 == null) return false;
-      final dek = SecretKey(base64Decode(dekB64));
+      final dek = await _security.readDek();
+      if (dek == null) return false;
       _repo.encryptionKey = dek;
       _authenticated = true;
+      await _maybeMigrateLegacyData();
       notifyListeners();
       return true;
     } catch (_) {
@@ -394,15 +398,63 @@ class AppState extends ChangeNotifier {
     await _settings.prefs.remove('master_password_salt');
     await _settings.prefs.remove('master_password_wrapped_dek');
     await _settings.prefs.remove('biometric_auth_enabled');
-    await _secureStorage.delete(key: 'master_dek');
+    await _security.clearDek();
     _repo.encryptionKey = null;
     _authenticated = false;
     notifyListeners();
   }
 
+  /// One-time migration: rewrites any legacy plaintext metadata to encrypted
+  /// form after the first successful unlock with a master password (R1-10).
+  Future<void> _maybeMigrateLegacyData() async {
+    if (_settings.prefs.getBool('metadata_encryption_v1') != true) {
+      await _repo.migrateLegacyMetadata();
+      await _settings.prefs.setBool('metadata_encryption_v1', true);
+    }
+  }
+
   void lock() {
+    _inactivityTimer?.cancel();
     _repo.encryptionKey = null;
     _authenticated = false;
     notifyListeners();
+  }
+
+  Timer? _inactivityTimer;
+  static const _inactivityTimeout = Duration(minutes: 5);
+
+  /// Auto-lock when the app is backgrounded (paused/hidden/detached): the DEK
+  /// is dropped from memory immediately so the vault re-locks on return
+  /// (R1-9).
+  void onBackgrounded() {
+    _inactivityTimer?.cancel();
+    if (hasMasterPassword && _authenticated) {
+      lock();
+    }
+  }
+
+  /// On resume the vault may still be unlocked if it was never backgrounded
+  /// (e.g. quick app-switch that didn't pause) — re-arm the inactivity timer.
+  void onResumed() {
+    if (!hasMasterPassword) return;
+    if (_authenticated) {
+      _armInactivityTimer();
+    }
+  }
+
+  /// Registers user activity (pointer/touch events) to reset the inactivity
+  /// timer. Wired from the root widget's [Listener].
+  void registerActivity() {
+    if (!hasMasterPassword || !_authenticated) return;
+    _armInactivityTimer();
+  }
+
+  void _armInactivityTimer() {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = Timer(_inactivityTimeout, () {
+      if (hasMasterPassword && _authenticated) {
+        lock();
+      }
+    });
   }
 }

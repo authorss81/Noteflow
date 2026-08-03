@@ -169,7 +169,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _strokeId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 
   Future<void> _importFiles(BuildContext context, AppState app) async {
-    final import = ImportService();
+    final import =
+        ImportService(keyProvider: () => app.repo.encryptionKey);
     final files = await import.pickFiles();
     if (files.isEmpty) return;
     NotePage? lastPage;

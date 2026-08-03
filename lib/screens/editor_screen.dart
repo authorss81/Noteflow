@@ -34,7 +34,7 @@ class EditorScreen extends StatefulWidget {
 class _EditorScreenState extends State<EditorScreen> {
   final _canvasKey = GlobalKey<AnnotationCanvasState>();
   final _boundaryKey = GlobalKey();
-  final ImportService _import = ImportService();
+  late final ImportService _import;
 
   StrokeTool _tool = StrokeTool.pen;
   Color _color = const Color(0xFF1B365D); // ink-blue default
@@ -50,6 +50,8 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void initState() {
     super.initState();
+    _import = ImportService(
+        keyProvider: () => widget.autosave.repo.encryptionKey);
     _page = widget.page;
     _loadPage();
     _lifecycle = AppLifecycleListener(

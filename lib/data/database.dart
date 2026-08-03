@@ -153,6 +153,9 @@ class AppDatabase extends _$AppDatabase {
         ..where((t) => t.notebookId.equals(notebookId))
         ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
       .get();
+
+  /// All sections across all notebooks (used by metadata migration, R1-10).
+  Future<List<Section>> allSections() => select(sections).get();
   Future<void> insertSection(SectionsCompanion s) =>
       into(sections).insertOnConflictUpdate(s);
 
@@ -187,7 +190,14 @@ class AppDatabase extends _$AppDatabase {
   Future<List<Page>> trashedPages() =>
       (select(pages)..where((t) => t.deleted.equals(true))).get();
 
+  /// All non-deleted pages (used by in-memory search since titles are
+  /// encrypted at rest, R1-10).
+  Future<List<Page>> allActivePages() =>
+      (select(pages)..where((t) => t.deleted.equals(false))).get();
+
   Future<List<Page>> searchPages(String query) {
+    // NOTE: replaced by in-memory matching in NoteRepository.searchPages
+    // because titles are encrypted at rest (R1-10).
     final like = '%${query.toLowerCase()}%';
     return (select(pages)
           ..where((t) =>

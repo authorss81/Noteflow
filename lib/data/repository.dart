@@ -17,14 +17,45 @@ class NoteRepository {
 
   NoteRepository(this._db);
 
+  /// Prefix marking an at-rest-encrypted metadata value (R1-10). Values that
+  /// don't carry this prefix are treated as legacy plaintext, which keeps
+  /// pre-encryption databases readable until [migrateLegacyMetadata] rewrites
+  /// them.
+  static const _metaPrefix = 'enc:v1:';
+
+  Future<String> _encryptMeta(String? plain) async {
+    final key = encryptionKey;
+    if (key == null || plain == null || plain.isEmpty) return plain ?? '';
+    if (plain.startsWith(_metaPrefix)) return plain;
+    return '$_metaPrefix${await EncryptionService.encrypt(plain, key)}';
+  }
+
+  Future<String> _decryptMeta(String? stored) async {
+    if (stored == null || stored.isEmpty) return stored ?? '';
+    if (!stored.startsWith(_metaPrefix)) return stored;
+    final key = encryptionKey;
+    if (key == null) return stored;
+    try {
+      return await EncryptionService.decrypt(
+          stored.substring(_metaPrefix.length), key);
+    } catch (_) {
+      return stored;
+    }
+  }
+
   Future<void> closeDatabase() => _db.close();
 
   // ---- Notebooks / Sections ----
   Future<List<Notebook>> notebooks() async {
     final rows = await _db.allNotebooks();
-    return rows
-        .map((n) => Notebook(id: n.id, name: n.name, createdAt: n.createdAt))
-        .toList();
+    final result = <Notebook>[];
+    for (final n in rows) {
+      result.add(Notebook(
+          id: n.id,
+          name: await _decryptMeta(n.name),
+          createdAt: n.createdAt));
+    }
+    return result;
   }
 
   Future<Notebook> ensureDefaultNotebook() async {
@@ -37,7 +68,7 @@ class NoteRepository {
     );
     await _db.insertNotebook(NotebooksCompanion.insert(
       id: nb.id,
-      name: nb.name,
+      name: await _encryptMeta(nb.name),
       createdAt: nb.createdAt,
     ));
     return nb;
@@ -45,10 +76,15 @@ class NoteRepository {
 
   Future<List<Section>> sections(String notebookId) async {
     final rows = await _db.sectionsFor(notebookId);
-    return rows
-        .map((s) => Section(
-            id: s.id, notebookId: s.notebookId, name: s.name, createdAt: s.createdAt))
-        .toList();
+    final result = <Section>[];
+    for (final s in rows) {
+      result.add(Section(
+          id: s.id,
+          notebookId: s.notebookId,
+          name: await _decryptMeta(s.name),
+          createdAt: s.createdAt));
+    }
+    return result;
   }
 
   Future<Section> ensureDefaultSection(String notebookId) async {
@@ -63,7 +99,7 @@ class NoteRepository {
     await _db.insertSection(SectionsCompanion.insert(
       id: s.id,
       notebookId: s.notebookId,
-      name: s.name,
+      name: await _encryptMeta(s.name),
       createdAt: s.createdAt,
     ));
     return s;
@@ -72,7 +108,11 @@ class NoteRepository {
   // ---- Pages ----
   Future<List<NotePage>> pages(String sectionId) async {
     final rows = await _db.pagesFor(sectionId);
-    return rows.map(_pageFromRow).toList();
+    final result = <NotePage>[];
+    for (final r in rows) {
+      result.add(await _pageFromRow(r));
+    }
+    return result;
   }
 
   Future<NotePage> createPage({
@@ -98,7 +138,7 @@ class NoteRepository {
     await _db.insertPage(drift.PagesCompanion.insert(
       id: p.id,
       sectionId: p.sectionId,
-      title: p.title,
+      title: await _encryptMeta(p.title),
       sourceFilePath: Value(p.sourceFilePath),
       sourceFileType: Value(p.sourceFileType),
       pageIndex: Value(p.pageIndex),
@@ -116,7 +156,7 @@ class NoteRepository {
 
   Future<void> renamePage(String id, String title) async {
     await (_db.update(_db.pages)..where((t) => t.id.equals(id)))
-        .write(PagesCompanion(title: Value(title)));
+        .write(PagesCompanion(title: Value(await _encryptMeta(title))));
   }
 
   Future<void> togglePin(String id, bool pinned) => _db.togglePin(id, pinned);
@@ -127,16 +167,32 @@ class NoteRepository {
 
   Future<List<NotePage>> trashedPages() async {
     final rows = await _db.trashedPages();
-    return rows.map(_pageFromRow).toList();
+    final result = <NotePage>[];
+    for (final r in rows) {
+      result.add(await _pageFromRow(r));
+    }
+    return result;
   }
 
   Future<List<NotePage>> searchPages(String query) async {
-    final rows = await _db.searchPages(query);
-    return rows.map(_pageFromRow).toList();
+    // Titles are encrypted at rest, so SQL LIKE can't be used (R1-10). Decrypt
+    // all active titles and match in memory. This also sidesteps LIKE wildcard
+    // injection from `%`/`_`.
+    final rows = await _db.allActivePages();
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return [];
+    final result = <NotePage>[];
+    for (final r in rows) {
+      final title = (await _decryptMeta(r.title)).toLowerCase();
+      if (title.contains(q)) result.add(await _pageFromRow(r));
+    }
+    return result;
   }
 
-  Future<void> renameNotebook(String id, String name) => _db.renameNotebook(id, name);
-  Future<void> renameSection(String id, String name) => _db.renameSection(id, name);
+  Future<void> renameNotebook(String id, String name) async =>
+      _db.renameNotebook(id, await _encryptMeta(name));
+  Future<void> renameSection(String id, String name) async =>
+      _db.renameSection(id, await _encryptMeta(name));
   Future<void> deleteSection(String id) => _db.deleteSection(id);
 
   /// Permanently deletes every trashed page (and their imported files).
@@ -147,10 +203,10 @@ class NoteRepository {
     }
   }
 
-  NotePage _pageFromRow(drift.Page p) => NotePage(
+  Future<NotePage> _pageFromRow(drift.Page p) async => NotePage(
         id: p.id,
         sectionId: p.sectionId,
-        title: p.title,
+        title: await _decryptMeta(p.title),
         sourceFilePath: p.sourceFilePath,
         sourceFileType: p.sourceFileType,
         pageIndex: p.pageIndex,
@@ -237,20 +293,46 @@ class NoteRepository {
     return decrypted;
   }
 
-  Future<void> insertNotebook(Notebook n) => _db.insertNotebook(NotebooksCompanion.insert(
+  Future<void> insertNotebook(Notebook n) async =>
+      _db.insertNotebook(NotebooksCompanion.insert(
         id: n.id,
-        name: n.name,
+        name: await _encryptMeta(n.name),
         createdAt: n.createdAt,
       ));
 
-  Future<void> insertSection(Section s) => _db.insertSection(SectionsCompanion.insert(
+  Future<void> insertSection(Section s) async =>
+      _db.insertSection(SectionsCompanion.insert(
         id: s.id,
         notebookId: s.notebookId,
-        name: s.name,
+        name: await _encryptMeta(s.name),
         createdAt: s.createdAt,
       ));
 
   Future<void> deleteNotebook(String id) => _db.deleteNotebook(id);
+
+  /// One-time migration that rewrites any legacy plaintext metadata (notebook
+  /// names, section names, page titles, tag names) to DEK-encrypted form.
+  /// Called after the first successful unlock once a master password exists
+  /// (R1-10).
+  Future<void> migrateLegacyMetadata() async {
+    for (final n in await _db.allNotebooks()) {
+      if (n.name.isEmpty || n.name.startsWith(_metaPrefix)) continue;
+      await _db.renameNotebook(n.id, await _encryptMeta(n.name));
+    }
+    for (final s in await _db.allSections()) {
+      if (s.name.isEmpty || s.name.startsWith(_metaPrefix)) continue;
+      await _db.renameSection(s.id, await _encryptMeta(s.name));
+    }
+    for (final p in await _db.allActivePages()) {
+      if (p.title.isEmpty || p.title.startsWith(_metaPrefix)) continue;
+      await (_db.update(_db.pages)..where((t) => t.id.equals(p.id)))
+          .write(PagesCompanion(title: Value(await _encryptMeta(p.title))));
+    }
+    for (final t in await _db.allTags()) {
+      if (t.name.isEmpty || t.name.startsWith(_metaPrefix)) continue;
+      await _db.renameTag(t.id, await _encryptMeta(t.name));
+    }
+  }
 
   /// Permanently deletes a page, also removing its imported source file.
   Future<void> deletePage(String id, {String? sourceFilePath}) async {

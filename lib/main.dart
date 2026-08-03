@@ -34,12 +34,60 @@ class NoteflowApp extends StatelessWidget {
           return MaterialApp(
             title: 'Noteflow',
             debugShowCheckedModeBanner: false,
-            home: app.hasMasterPassword && !app.authenticated
-                ? const LockScreen()
-                : const HomeScreen(),
+            home: _Root(app: app),
           );
         },
       ),
+    );
+  }
+}
+
+/// Root widget that observes app lifecycle and locks the vault when the app
+/// is backgrounded (R1-9). Re-locks whenever the process is resumed, so notes
+/// are never left open on a borrowed/unlocked device.
+class _Root extends StatefulWidget {
+  const _Root({required this.app});
+
+  final AppState app;
+
+  @override
+  State<_Root> createState() => _RootState();
+}
+
+class _RootState extends State<_Root> {
+  AppLifecycleListener? _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(
+      onStateChange: (state) {
+        if (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.detached) {
+          widget.app.onBackgrounded();
+        } else if (state == AppLifecycleState.resumed) {
+          widget.app.onResumed();
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Track any user interaction to reset the inactivity auto-lock timer (R1-9).
+    return Listener(
+      onPointerDown: (_) => widget.app.registerActivity(),
+      behavior: HitTestBehavior.translucent,
+      child: widget.app.hasMasterPassword && !widget.app.authenticated
+          ? const LockScreen()
+          : const HomeScreen(),
     );
   }
 }
