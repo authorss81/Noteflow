@@ -1,8 +1,8 @@
 import 'dart:io' as io;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,6 +28,9 @@ class EditorScreen extends StatefulWidget {
   final NotePage page;
   final AutosaveService autosave;
 
+  static final GlobalKey tutorialDrawToolKey = GlobalKey();
+  static final GlobalKey tutorialZoomToolKey = GlobalKey();
+
   @override
   State<EditorScreen> createState() => _EditorScreenState();
 }
@@ -46,6 +49,7 @@ class _EditorScreenState extends State<EditorScreen> {
   ui.Image? _background;
   bool _loadingBg = false;
   bool _previewMarkdown = false;
+  bool _wasSaving = false;
   AppLifecycleListener? _lifecycle;
 
   // Multi-page PDF support (R1-22): the page count and the current page's
@@ -409,13 +413,29 @@ String _formatTime(DateTime t) =>
     );
   }
 
+  IconData _iconForFileType(String? type) {
+    return switch (type) {
+      'pdf' => Icons.picture_as_pdf_outlined,
+      'image' => Icons.image_outlined,
+      'text' => Icons.notes,
+      _ => Icons.description_outlined,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: scheme.surface,
-appBar: AppBar(
+      appBar: AppBar(
         automaticallyImplyLeading: false,
+        leading: Hero(
+          tag: 'page-${_page.id}',
+          child: Icon(
+            _iconForFileType(_page.sourceFileType),
+            color: scheme.primary,
+          ),
+        ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -429,21 +449,51 @@ appBar: AppBar(
               builder: (context, _) {
                 final saving = widget.autosave.saving;
                 final lastSavedAt = widget.autosave.lastSavedAt;
-                return Text(
-                  _loadingBg
-                      ? 'Loading…'
-                      : (saving
-                          ? 'Saving…'
-                          : lastSavedAt != null
-                              ? 'Saved ${_formatTime(lastSavedAt)}'
-                              : 'Autosaved'),
-                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+
+                if (_wasSaving && !saving) {
+                  HapticFeedback.selectionClick();
+                }
+                _wasSaving = saving;
+
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _loadingBg
+                          ? 'Loading…'
+                          : (saving
+                              ? 'Saving…'
+                              : lastSavedAt != null
+                                  ? 'Saved ${_formatTime(lastSavedAt)}'
+                                  : 'Autosaved'),
+                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                    ),
+                    if (!saving && lastSavedAt != null) ...[
+                      const SizedBox(width: 4),
+                      TweenAnimationBuilder<double>(
+                        key: ValueKey(lastSavedAt),
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 350),
+                        curve: Curves.elasticOut,
+                        builder: (context, val, child) {
+                          return Transform.scale(
+                            scale: val,
+                            child: const Icon(
+                              Icons.check_circle_outline,
+                              color: Colors.green,
+                              size: 14,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ],
                 );
               },
             ),
           ],
         ),
-actions: [
+        actions: [
           IconButton(
             tooltip: 'Back',
             icon: const Icon(Icons.arrow_back),
@@ -559,7 +609,7 @@ IconButton(
           : null,
       ),
       body: _loadingBg
-          ? const Center(child: CircularProgressIndicator())
+          ? const PaperSkeletonShimmer()
           : _previewMarkdown
               ? Container(
                   color: Theme.of(context).colorScheme.surface,
@@ -756,21 +806,31 @@ class _Toolbar extends StatelessWidget {
   final ValueChanged<Color> onColor;
   final ValueChanged<double> onWidth;
 
-  Widget _toolBtn(BuildContext context, StrokeTool t, IconData icon, String label) {
+  Widget _toolBtn(BuildContext context, StrokeTool t, IconData icon, String label, {Key? key}) {
     final selected = tool == t;
     final scheme = Theme.of(context).colorScheme;
     return Tooltip(
       message: label,
       child: InkWell(
+        key: key,
         borderRadius: BorderRadius.circular(8),
-        onTap: () => onTool(t),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: selected ? scheme.primaryContainer : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+        onTap: () {
+          onTool(t);
+          HapticFeedback.selectionClick();
+        },
+        child: AnimatedScale(
+          scale: selected ? 1.15 : 1.0,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutBack,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: selected ? scheme.primaryContainer : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 20, color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
           ),
-          child: Icon(icon, size: 20, color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
         ),
       ),
     );
@@ -791,8 +851,8 @@ class _Toolbar extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _toolBtn(context, StrokeTool.select, Icons.pan_tool, 'Pan/Zoom'),
-              _toolBtn(context, StrokeTool.pen, Icons.draw, 'Pen'),
+              _toolBtn(context, StrokeTool.select, Icons.pan_tool, 'Pan/Zoom', key: EditorScreen.tutorialZoomToolKey),
+              _toolBtn(context, StrokeTool.pen, Icons.draw, 'Pen', key: EditorScreen.tutorialDrawToolKey),
               _toolBtn(context, StrokeTool.highlighter, Icons.border_color, 'Highlighter'),
               _toolBtn(context, StrokeTool.eraser, Icons.cleaning_services_outlined, 'Eraser'),
               _toolBtn(context, StrokeTool.text, Icons.text_fields, 'Text'),
@@ -1132,5 +1192,103 @@ class _PdfPageStripState extends State<_PdfPageStrip> {
       ),
     );
   }
+}
+
+class PaperSkeletonShimmer extends StatefulWidget {
+  const PaperSkeletonShimmer({super.key});
+
+  @override
+  State<PaperSkeletonShimmer> createState() => _PaperSkeletonShimmerState();
+}
+
+class _PaperSkeletonShimmerState extends State<PaperSkeletonShimmer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Container(
+          width: double.infinity,
+          height: double.infinity,
+          color: scheme.surface,
+          padding: const EdgeInsets.all(24),
+          child: CustomPaint(
+            painter: _SkeletonPainter(
+              progress: _controller.value,
+              baseColor: scheme.outlineVariant.withAlpha(50),
+              highlightColor: scheme.outlineVariant.withAlpha(120),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonPainter extends CustomPainter {
+  final double progress;
+  final Color baseColor;
+  final Color highlightColor;
+
+  _SkeletonPainter({
+    required this.progress,
+    required this.baseColor,
+    required this.highlightColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(size.width * (progress - 0.4), 0),
+        Offset(size.width * (progress + 0.4), 0),
+        [baseColor, highlightColor, baseColor],
+        [0.0, 0.5, 1.0],
+      );
+
+    // Draw simulated paper header
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, size.width * 0.4, 28),
+        const Radius.circular(8),
+      ),
+      paint,
+    );
+
+    // Draw simulated paper lines / blocks
+    double top = 56;
+    while (top < size.height) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, top, size.width * (top % 3 == 0 ? 0.85 : (top % 2 == 0 ? 0.95 : 0.7)), 16),
+          const Radius.circular(4),
+        ),
+        paint,
+      );
+      top += 36;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SkeletonPainter oldDelegate) => true;
 }
 

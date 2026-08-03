@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:convert';
 import 'dart:io';
 import '../services/plugin_loader_service.dart';
@@ -22,21 +23,121 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'editor_screen.dart';
 import 'markdown_preview_screen.dart';
+import '../widgets/interactive_tutorial.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  static final GlobalKey tutorialAddNotebookKey = GlobalKey();
+  static final GlobalKey tutorialAddSectionKey = GlobalKey();
+  static final GlobalKey tutorialImportKey = GlobalKey();
+  static final GlobalKey tutorialSettingsKey = GlobalKey();
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   AppState? _p2pApp;
   VoidCallback? _p2pListener;
+  bool _tutorialActive = false;
+
+  bool _confettiActive = false;
+  List<ConfettiParticle> _confettiParticles = [];
+  AnimationController? _confettiController;
+
+  void _setupConfetti() {
+    _confettiController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..addListener(() {
+        if (!mounted) return;
+        setState(() {
+          for (final p in _confettiParticles) {
+            p.update();
+          }
+        });
+      })..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          setState(() {
+            _confettiActive = false;
+            _confettiParticles = [];
+          });
+        }
+      });
+  }
+
+  void _triggerConfetti() {
+    final rand = math.Random();
+    final size = MediaQuery.of(context).size;
+    _confettiParticles = List.generate(80, (index) {
+      final color = Colors.primaries[rand.nextInt(Colors.primaries.length)];
+      return ConfettiParticle(
+        position: Offset(size.width / 2, size.height / 3),
+        velocity: Offset(
+          (rand.nextDouble() - 0.5) * 12,
+          (rand.nextDouble() - 0.8) * 15,
+        ),
+        color: color,
+        size: rand.nextDouble() * 6 + 4,
+      );
+    });
+    setState(() {
+      _confettiActive = true;
+    });
+    _confettiController?.forward(from: 0.0);
+  }
+
+  void _startTutorial() {
+    setState(() {
+      _tutorialActive = true;
+    });
+  }
+
+  void _endTutorial(AppState app) {
+    setState(() {
+      _tutorialActive = false;
+    });
+    app.settings.prefs.setBool('tutorial_completed', true);
+  }
+
+  List<TutorialStep> _buildTutorialSteps(AppState app) {
+    return [
+      const TutorialStep(
+        title: 'Welcome to Noteflow',
+        description: 'Noteflow is a secure, private, cross-platform notebook for your thoughts and documents. Let\'s do a quick walkthrough of its features!',
+      ),
+      TutorialStep(
+        title: 'Add Notebook',
+        description: 'Organize your notes into Notebooks (e.g. Work, Journal, Sketches). Click here to create a new Notebook.',
+        anchorKey: HomeScreen.tutorialAddNotebookKey,
+      ),
+      TutorialStep(
+        title: 'Sections',
+        description: 'Each notebook has Sections (like chapters) to group related note pages. Click here to add a new Section.',
+        anchorKey: HomeScreen.tutorialAddSectionKey,
+      ),
+      TutorialStep(
+        title: 'Import Files',
+        description: 'Import PDF documents, images, Markdown files, or Word DOCX files. DOCX files are converted to Markdown offline instantly!',
+        anchorKey: HomeScreen.tutorialImportKey,
+      ),
+      TutorialStep(
+        title: 'Settings & Encryption',
+        description: 'Set up biometric locks, E2E encryption, and encrypted backups here to ensure absolute data privacy.',
+        anchorKey: HomeScreen.tutorialSettingsKey,
+      ),
+      const TutorialStep(
+        title: 'Draw & Annotate',
+        description: 'Open any note page to start drawing! Let\'s open the welcome note now to explore the drawing canvas toolbar and the select (pan/zoom) tool.',
+      ),
+    ];
+  }
 
   @override
   void initState() {
     super.initState();
+    _setupConfetti();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkWelcome();
       _setupP2pListener();
@@ -45,9 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    // CORR-31: remove the listener on dispose — every unlock created a new
-    // HomeScreen that re-registered, leaking subscriptions and producing
-    // duplicate SnackBars.
+    _confettiController?.dispose();
     final app = _p2pApp;
     final listener = _p2pListener;
     if (app != null && listener != null) {
@@ -80,6 +179,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final app = context.read<AppState>();
     if (app.settings.isFirstRun) {
       _showWelcome(app);
+    } else {
+      final tutorialDone = app.settings.prefs.getBool('tutorial_completed') ?? false;
+      if (!tutorialDone) {
+        _startTutorial();
+      }
     }
   }
 
@@ -154,6 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () async {
               await app.settings.markFirstRunComplete();
               if (ctx.mounted) Navigator.pop(ctx);
+              _startTutorial();
             },
             child: const Text('Get Started', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
           ),
@@ -249,6 +354,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     if (!context.mounted) return;
+    if (importedCount > 0) {
+      _triggerConfetti();
+      HapticFeedback.mediumImpact();
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Imported $importedCount page(s)')),
     );
@@ -277,26 +386,61 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Consumer<AppState>(builder: (context, app, _) {
       final isWide = MediaQuery.of(context).size.width >= 840;
+      Widget child;
       if (isWide) {
-        return Row(
+        child = Row(
           children: [
             SizedBox(width: 300, child: _NotebookPanel(app: app)),
             const VerticalDivider(width: 1, thickness: 1),
             SizedBox(width: 280, child: _SectionPanel(app: app)),
             const VerticalDivider(width: 1, thickness: 1),
-            Expanded(child: _PageListPanel(app: app, onImport: () => _importFiles(context, app))),
+            Expanded(child: _PageListPanel(
+              app: app,
+              onImport: () => _importFiles(context, app),
+              onConfetti: _triggerConfetti,
+            )),
           ],
         );
+      } else {
+        child = _MobileHome(
+          app: app,
+          onImport: () => _importFiles(context, app),
+          onConfetti: _triggerConfetti,
+        );
       }
+
       return Scaffold(
         appBar: AppBar(
           title: const Text('Noteflow'),
           actions: [
+            IconButton(
+              key: HomeScreen.tutorialSettingsKey,
+              tooltip: 'Start Onboarding Walkthrough',
+              icon: const Icon(Icons.help_outline),
+              onPressed: _startTutorial,
+            ),
             _ThemeMenu(app: app),
             _MaintenanceMenu(app: app),
           ],
         ),
-        body: _MobileHome(app: app, onImport: () => _importFiles(context, app)),
+        body: Stack(
+          children: [
+            child,
+            if (_confettiActive)
+              IgnorePointer(
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: ConfettiPainter(_confettiParticles),
+                ),
+              ),
+            if (_tutorialActive)
+              InteractiveTutorial(
+                steps: _buildTutorialSteps(app),
+                onComplete: () => _endTutorial(app),
+                onSkip: () => _endTutorial(app),
+              ),
+          ],
+        ),
       );
     });
   }
@@ -908,11 +1052,15 @@ class _NotebookPanel extends StatelessWidget {
                 Text('Notebooks', style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
                 IconButton(
+                  key: HomeScreen.tutorialAddNotebookKey,
                   icon: const Icon(Icons.add),
                   tooltip: 'New notebook',
                   onPressed: () => promptName(context, 'New notebook',
                       onSubmit: (name) {
-                        if (name.isNotEmpty) app.addNotebook(name);
+                        if (name.isNotEmpty) {
+                          app.addNotebook(name);
+                          HapticFeedback.mediumImpact();
+                        }
                       }),
                 ),
                 _ThemeMenu(app: app),
@@ -922,9 +1070,10 @@ class _NotebookPanel extends StatelessWidget {
           ),
           Expanded(
             child: app.notebooks.isEmpty
-                ? Center(
-                    child: Text('Create your first notebook.',
-                        style: TextStyle(color: scheme.onSurfaceVariant)))
+                ? const _AnimatedEmptyState(
+                    icon: Icons.menu_book,
+                    text: 'Create your first notebook to get started.',
+                  )
                 : ListView.builder(
                     itemCount: app.notebooks.length,
                     itemBuilder: (context, i) {
@@ -1070,10 +1219,14 @@ class _SectionPanel extends StatelessWidget {
                 Text('Sections', style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
                 IconButton(
+                  key: HomeScreen.tutorialAddSectionKey,
                   icon: const Icon(Icons.add),
                   tooltip: 'New section',
                   onPressed: () => promptName(context, 'New section', onSubmit: (name) {
-                    if (name.isNotEmpty) app.addSection(name);
+                    if (name.isNotEmpty) {
+                      app.addSection(name);
+                      HapticFeedback.mediumImpact();
+                    }
                   }),
                 ),
               ],
@@ -1081,9 +1234,10 @@ class _SectionPanel extends StatelessWidget {
           ),
           Expanded(
             child: app.sections.isEmpty
-                ? Center(
-                    child: Text('No sections in this notebook.',
-                        style: TextStyle(color: scheme.onSurfaceVariant)))
+                ? const _AnimatedEmptyState(
+                    icon: Icons.folder_open,
+                    text: 'Create a section to organize your note pages.',
+                  )
                 : ListView.builder(
                     itemCount: app.sections.length,
                     itemBuilder: (context, i) {
@@ -1167,9 +1321,10 @@ class _SectionPanel extends StatelessWidget {
 
 // ---------- Pages panel ----------
 class _PageListPanel extends StatelessWidget {
-  const _PageListPanel({required this.app, required this.onImport});
+  const _PageListPanel({required this.app, required this.onImport, required this.onConfetti});
   final AppState app;
   final VoidCallback onImport;
+  final VoidCallback onConfetti;
 
   void _addPageDialog(BuildContext context, AppState app) {
     final titleController = TextEditingController(text: 'Untitled');
@@ -1268,6 +1423,7 @@ class _PageListPanel extends StatelessWidget {
                   onPressed: () => _openTrash(context, app),
                 ),
                 IconButton(
+                  key: HomeScreen.tutorialImportKey,
                   icon: const Icon(Icons.file_upload_outlined),
                   tooltip: 'Import file',
                   onPressed: onImport,
@@ -1287,22 +1443,13 @@ class _PageListPanel extends StatelessWidget {
           ),
           Expanded(
             child: app.pages.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.note_add_outlined,
-                            size: 56, color: scheme.onSurfaceVariant),
-                        const SizedBox(height: 12),
-                        Text('No pages yet. Import a file or add a blank page.',
-                            style: TextStyle(color: scheme.onSurfaceVariant)),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: onImport,
-                          icon: const Icon(Icons.file_upload_outlined),
-                          label: const Text('Import file'),
-                        ),
-                      ],
+                ? _AnimatedEmptyState(
+                    icon: Icons.note_add_outlined,
+                    text: 'No pages yet. Import a file or add a blank page.',
+                    action: FilledButton.icon(
+                      onPressed: onImport,
+                      icon: const Icon(Icons.file_upload_outlined),
+                      label: const Text('Import file'),
                     ),
                   )
                 : ListView.builder(
@@ -1444,6 +1591,8 @@ class _PageListPanel extends StatelessWidget {
                       await app.repo.saveStrokes(mergedPage.id, mergedStrokes);
                       
                       if (context.mounted) {
+                        onConfetti();
+                        HapticFeedback.mediumImpact();
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('Pages merged successfully!'),
@@ -1487,7 +1636,6 @@ class _SearchSheetState extends State<_SearchSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.7,
@@ -1517,9 +1665,10 @@ class _SearchSheetState extends State<_SearchSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _results.isEmpty
-                      ? Center(
-                          child: Text('No matching pages.',
-                              style: TextStyle(color: scheme.onSurfaceVariant)))
+                      ? const _AnimatedEmptyState(
+                          icon: Icons.search_off,
+                          text: 'No matching pages.',
+                        )
                       : ListView.builder(
                           controller: scrollController,
                           itemCount: _results.length,
@@ -1555,12 +1704,9 @@ class _RecentSheet extends StatelessWidget {
               const SizedBox(height: 8),
               Expanded(
                 child: app.recent.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Pages you open will show up here.',
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant),
-                        ),
+                    ? const _AnimatedEmptyState(
+                        icon: Icons.history_toggle_off,
+                        text: 'No recently opened pages yet.',
                       )
                     : ListView.builder(
                         controller: scrollController,
@@ -1619,9 +1765,10 @@ class _TrashSheetState extends State<_TrashSheet> {
               const SizedBox(height: 8),
               Expanded(
                 child: app.trashed.isEmpty
-                    ? Center(
-                        child: Text('Trash is empty.',
-                            style: TextStyle(color: scheme.onSurfaceVariant)))
+                    ? const _AnimatedEmptyState(
+                        icon: Icons.delete_sweep_outlined,
+                        text: 'Trash is empty.',
+                      )
                     : ListView.builder(
                         controller: scrollController,
                         itemCount: app.trashed.length,
@@ -1686,8 +1833,11 @@ class _PageTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final selected = app.page?.id == page.id;
     return ListTile(
-      leading: Icon(_iconName(),
-          color: selected ? scheme.primary : scheme.onSurfaceVariant),
+      leading: Hero(
+        tag: 'page-${page.id}',
+        child: Icon(_iconName(),
+            color: selected ? scheme.primary : scheme.onSurfaceVariant),
+      ),
       title: Text(page.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(_relative(page.updatedAt), style: const TextStyle(fontSize: 12)),
       trailing: PopupMenuButton<String>(
@@ -2050,9 +2200,10 @@ class _PageTile extends StatelessWidget {
 
 // ---------- Mobile layout ----------
 class _MobileHome extends StatelessWidget {
-  const _MobileHome({required this.app, required this.onImport});
+  const _MobileHome({required this.app, required this.onImport, required this.onConfetti});
   final AppState app;
   final VoidCallback onImport;
+  final VoidCallback onConfetti;
 
   @override
   Widget build(BuildContext context) {
@@ -2072,7 +2223,7 @@ class _MobileHome extends StatelessWidget {
               children: [
                 _NotebookPanel(app: app),
                 _SectionPanel(app: app),
-                _PageListPanel(app: app, onImport: onImport),
+                _PageListPanel(app: app, onImport: onImport, onConfetti: onConfetti),
               ],
             ),
           ),
@@ -2080,4 +2231,85 @@ class _MobileHome extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AnimatedEmptyState extends StatelessWidget {
+  const _AnimatedEmptyState({required this.icon, required this.text, this.action});
+  final IconData icon;
+  final String text;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.elasticOut,
+        builder: (context, value, child) {
+          return Transform.scale(
+            scale: value,
+            child: child,
+          );
+        },
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 56, color: scheme.primary.withAlpha(120)),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
+              ),
+            ),
+            if (action != null) ...[
+              const SizedBox(height: 16),
+              action!,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ConfettiParticle {
+  Offset position;
+  Offset velocity;
+  Color color;
+  double size;
+
+  ConfettiParticle({
+    required this.position,
+    required this.velocity,
+    required this.color,
+    required this.size,
+  });
+
+  void update() {
+    position += velocity;
+    velocity += const Offset(0, 0.15); // gravity
+  }
+}
+
+class ConfettiPainter extends CustomPainter {
+  final List<ConfettiParticle> particles;
+  ConfettiPainter(this.particles);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final p in particles) {
+      final paint = Paint()
+        ..color = p.color
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(p.position, p.size, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

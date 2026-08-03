@@ -60,7 +60,7 @@ android {
             signingConfig = if (keystoreProperties.containsKey("storeFile")) {
                 signingConfigs.getByName("release")
             } else {
-                null
+                signingConfigs.getByName("debug")
             }
 
             // R1-6: enable R8/proguard minification and resource shrinking.

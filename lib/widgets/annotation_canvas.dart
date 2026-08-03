@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/stroke.dart';
 import '../theme/app_theme.dart';
@@ -46,10 +48,42 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
   List<Offset>? _points;
   Offset? _dragStart;
 
+  double _scale = 1.0;
+  bool _showScaleOverlay = false;
+  Timer? _scaleOverlayTimer;
+
+  void _onTransformChanged() {
+    final matrix = _transform.value;
+    final scale = matrix.getMaxScaleOnAxis();
+    if ((scale - _scale).abs() > 0.01) {
+      setState(() {
+        _scale = scale;
+        _showScaleOverlay = true;
+      });
+      _scaleOverlayTimer?.cancel();
+      _scaleOverlayTimer = Timer(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          setState(() {
+            _showScaleOverlay = false;
+          });
+        }
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _strokes = List.of(widget.initialStrokes);
+    _transform.addListener(_onTransformChanged);
+  }
+
+  @override
+  void dispose() {
+    _transform.removeListener(_onTransformChanged);
+    _transform.dispose();
+    _scaleOverlayTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -61,6 +95,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
     // stroke and the undo/redo stacks.
     if (!identical(oldWidget.initialStrokes, widget.initialStrokes) &&
         !_sameStrokeList(oldWidget.initialStrokes, widget.initialStrokes)) {
+
       _strokes = List.of(widget.initialStrokes);
       _undo.clear();
       _redo.clear();
@@ -81,6 +116,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
   Offset _canvasPoint(Offset local) => local;
 
   void _beginStroke(Offset local) {
+    HapticFeedback.lightImpact();
     final p = _canvasPoint(local);
     _points = [p];
     _dragStart = p;
@@ -94,6 +130,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
 
   void _endStroke(double pressure) {
     if (_points == null) return;
+    HapticFeedback.lightImpact();
     final tool = widget.tool;
     if (tool == StrokeTool.eraser) {
       _erase(_points!);
@@ -173,6 +210,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
 
   void undo() {
     if (_undo.isEmpty) return;
+    HapticFeedback.lightImpact();
     _redo.add(List.of(_strokes));
     _strokes = _undo.removeLast();
     setState(() {});
@@ -181,6 +219,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
 
   void redo() {
     if (_redo.isEmpty) return;
+    HapticFeedback.lightImpact();
     _undo.add(List.of(_strokes));
     _strokes = _redo.removeLast();
     setState(() {});
@@ -227,48 +266,89 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
     final canvasColor = Theme.of(context).scaffoldBackgroundColor;
     return ClipRect(
       child: LayoutBuilder(builder: (context, constraints) {
-        return InteractiveViewer(
-          transformationController: _transform,
-          constrained: true,
-          minScale: 0.1,
-          maxScale: 8,
-          panEnabled: widget.tool == StrokeTool.select,
-          scaleEnabled: widget.tool == StrokeTool.select,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapDown: (d) {
-              if (widget.tool == StrokeTool.text) {
-                _beginText(d.localPosition);
-              }
-            },
-            onPanStart: (d) {
-              if (widget.tool == StrokeTool.select) return;
-              _beginStroke(d.localPosition);
-            },
-            onPanUpdate: (d) {
-              if (widget.tool == StrokeTool.select) return;
-              _continueStroke(d.localPosition);
-            },
-            onPanEnd: (d) {
-              if (widget.tool == StrokeTool.select) return;
-              _endStroke(d.velocity.pixelsPerSecond.distance > 0 ? 1.0 : 0.0);
-            },
-            child: SizedBox(
-              width: 1200,
-              height: 1600,
-              child: CustomPaint(
-                painter: _CanvasPainter(
-                  strokes: _strokes,
-                  inProgress: _inProgressStroke(),
-                  backgroundImage: widget.backgroundImage,
-                  template: widget.template,
-                  palette: PaperPalette.of(
-                      themeModeOf(Theme.of(context).colorScheme)),
-                  canvasColor: canvasColor,
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                transformationController: _transform,
+                constrained: true,
+                minScale: 0.1,
+                maxScale: 8,
+                panEnabled: widget.tool == StrokeTool.select,
+                scaleEnabled: widget.tool == StrokeTool.select,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (d) {
+                    if (widget.tool == StrokeTool.text) {
+                      _beginText(d.localPosition);
+                    }
+                  },
+                  onPanStart: (d) {
+                    if (widget.tool == StrokeTool.select) return;
+                    _beginStroke(d.localPosition);
+                  },
+                  onPanUpdate: (d) {
+                    if (widget.tool == StrokeTool.select) return;
+                    _continueStroke(d.localPosition);
+                  },
+                  onPanEnd: (d) {
+                    if (widget.tool == StrokeTool.select) return;
+                    _endStroke(d.velocity.pixelsPerSecond.distance > 0 ? 1.0 : 0.0);
+                  },
+                  child: SizedBox(
+                    width: 1200,
+                    height: 1600,
+                    child: CustomPaint(
+                      painter: _CanvasPainter(
+                        strokes: _strokes,
+                        inProgress: _inProgressStroke(),
+                        backgroundImage: widget.backgroundImage,
+                        template: widget.template,
+                        palette: PaperPalette.of(
+                            themeModeOf(Theme.of(context).colorScheme)),
+                        canvasColor: canvasColor,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+            if (_showScaleOverlay)
+              Positioned(
+                top: 16,
+                right: 16,
+                child: TweenAnimationBuilder<double>(
+                  key: ValueKey(_scale),
+                  tween: Tween(begin: 0.0, end: 1.0),
+                  duration: const Duration(milliseconds: 200),
+                  builder: (context, val, child) {
+                    return Opacity(
+                      opacity: val,
+                      child: Card(
+                        color: Colors.black.withAlpha(160),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            '${(_scale * 100).toInt()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
         );
       }),
     );
@@ -401,6 +481,14 @@ class _CanvasPainter extends CustomPainter {
     for (final s in all) {
       _paintStroke(canvas, s);
     }
+
+    // Draw active lagging pen tip-dot (E1-6)
+    if (inProgress != null && inProgress!.points.isNotEmpty) {
+      final tipPaint = Paint()
+        ..color = inProgress!.color
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(inProgress!.points.last, inProgress!.width * 0.75, tipPaint);
+    }
   }
 
   Rect _containFit(ui.Image image, Size target) {
@@ -435,11 +523,24 @@ class _CanvasPainter extends CustomPainter {
       case StrokeTool.pen:
       case StrokeTool.highlighter:
         if (s.points.isEmpty) break;
-        final path = Path()..moveTo(s.points.first.dx, s.points.first.dy);
-        for (final p in s.points.skip(1)) {
-          path.lineTo(p.dx, p.dy);
+        if (s.points.length < 3) {
+          final path = Path()..moveTo(s.points.first.dx, s.points.first.dy);
+          for (final p in s.points.skip(1)) {
+            path.lineTo(p.dx, p.dy);
+          }
+          canvas.drawPath(path, paint);
+        } else {
+          final path = Path()..moveTo(s.points.first.dx, s.points.first.dy);
+          for (int i = 1; i < s.points.length - 1; i++) {
+            final p0 = s.points[i];
+            final p1 = s.points[i + 1];
+            final xc = (p0.dx + p1.dx) / 2;
+            final yc = (p0.dy + p1.dy) / 2;
+            path.quadraticBezierTo(p0.dx, p0.dy, xc, yc);
+          }
+          path.lineTo(s.points.last.dx, s.points.last.dy);
+          canvas.drawPath(path, paint);
         }
-        canvas.drawPath(path, paint);
       case StrokeTool.text:
         final tp = TextPainter(
           text: TextSpan(
