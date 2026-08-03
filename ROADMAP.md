@@ -77,7 +77,7 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 13. ✅ done — **Placeholder `applicationId`/`namespace` `com.yourname.noteflow`** replaced with globally unique `com.authorss81.noteflow` (do not change again). (`android/app/build.gradle.kts:8,19`, `MainActivity.kt`)
 14. ✅ done — **`android:allowBackup` unset (=true)** → `allowBackup="false"` + `fullBackupContent="false"` + `data_extraction_rules` excluding root/file/database/sharedpref/external. (`AndroidManifest.xml`, `res/xml/data_extraction_rules.xml`)
 15. 🟡 partial — **Heavy work on the UI isolate** → ANR/jank & OOM: ✅ capped PDF render to 1600px long edge (no more native-res OOM), ✅ `ui.Image.dispose()` after PNG write in import; still TODO: isolate-offload of `loadPdfPages`/PNG encode (needs on-device verification — pdfrx isolate-safety), `file_picker withData:false`, autosave is already 400ms trailing-edge debounced. (`import_service.dart`, `home_screen.dart:199-236`)
-16. **Startup blocks first frame**: `main.dart` awaits SharedPrefs + DB open + `bootstrap()` which starts the P2P network server before `runApp`. Defer P2P/DB-heavy init to background. (`main.dart:12-21`, `app_state.dart:102-113`)
+16. ✅ done — **Startup blocks first frame**: `runApp` now happens immediately; `bootstrap()` (DB open + tree load + P2P server bind) runs in the background with a splash until `loaded`, and marks loaded even on failure. (`main.dart:12-21`, `app_state.dart:106-126`)
 17. **`allowBackup`/metadata plaintext** also breaks Play Data-safety honesty (see R1-10/14).
 
 ### R1-LOW (fix when convenient)

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,8 +19,10 @@ void main() async {
   final db = AppDatabase();
   final repo = NoteRepository(db);
   final app = AppState(repo, settings);
-  await app.bootstrap();
+  // R1-16: don't block the first frame on DB bootstrap + P2P server start —
+  // render immediately and load the tree in the background.
   runApp(NoteflowApp(app: app));
+  unawaited(app.bootstrap());
 }
 
 class NoteflowApp extends StatelessWidget {
@@ -86,6 +90,12 @@ class _RootState extends State<_Root> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.app.loaded) {
+      // Splash while bootstrap runs in the background (R1-16).
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
     // Track any user interaction to reset the inactivity auto-lock timer (R1-9).
     return Listener(
       onPointerDown: (_) => widget.app.registerActivity(),

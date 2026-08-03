@@ -103,20 +103,31 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Loads the tree + restores the last session, then starts the P2P server.
+  ///
+  /// Runs in the background (not awaited before `runApp`, R1-16) so the first
+  /// frame renders immediately. `_loaded` flips true even on failure so the UI
+  /// is never stuck on a splash.
   Future<void> bootstrap() async {
     initTheme();
-    _notebook = await _repo.ensureDefaultNotebook();
-    _section = await _repo.ensureDefaultSection(_notebook!.id);
-    await _reloadTree(selectNotebook: _notebook!.id, selectSection: _section!.id);
-    // Restore last session position if valid.
-    final lastNb = _settings.activeNotebookId;
-    final lastSec = _settings.activeSectionId;
-    if (lastNb != null && _notebooks.any((n) => n.id == lastNb)) {
-      await _reloadTree(selectNotebook: lastNb, selectSection: lastSec);
+    try {
+      _notebook = await _repo.ensureDefaultNotebook();
+      _section = await _repo.ensureDefaultSection(_notebook!.id);
+      await _reloadTree(
+          selectNotebook: _notebook!.id, selectSection: _section!.id);
+      // Restore last session position if valid.
+      final lastNb = _settings.activeNotebookId;
+      final lastSec = _settings.activeSectionId;
+      if (lastNb != null && _notebooks.any((n) => n.id == lastNb)) {
+        await _reloadTree(selectNotebook: lastNb, selectSection: lastSec);
+      }
+      await _p2pShare.startServer(_onReceiveP2pNote);
+    } catch (_) {
+      // Keep the app usable even if the DB/P2P init fails.
+    } finally {
+      _loaded = true;
+      notifyListeners();
     }
-    await _p2pShare.startServer(_onReceiveP2pNote);
-    _loaded = true;
-    notifyListeners();
   }
 
   /// Handles an incoming P2P note. Rejects while the vault is locked (no DEK
