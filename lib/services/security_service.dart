@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Encryption-ready security layer.
@@ -23,6 +24,8 @@ class SecurityService {
   bool get encryptionEnabled => _encryptionEnabled;
 
   Future<void> init() async {
+    // flutter_secure_storage is not supported on web — encryption disabled.
+    if (kIsWeb) return;
     final existing = await _storage.read(key: _dekKey);
     if (existing != null) {
       _encryptionEnabled = true;
@@ -31,6 +34,7 @@ class SecurityService {
 
   /// Creates the vault DEK if none exists. Idempotent.
   Future<void> ensureVault() async {
+    if (kIsWeb) return; // Not supported on web.
     final existing = await _storage.read(key: _dekKey);
     if (existing != null) return;
     final key = SecretKeyData.random(length: 32);
@@ -39,10 +43,15 @@ class SecurityService {
     _encryptionEnabled = true;
   }
 
-  Future<bool> isLocked() async => await _storage.read(key: _lockedKey) == 'true';
+  Future<bool> isLocked() async {
+    if (kIsWeb) return false;
+    return await _storage.read(key: _lockedKey) == 'true';
+  }
 
-  Future<void> setLocked(bool locked) =>
-      _storage.write(key: _lockedKey, value: '$locked');
+  Future<void> setLocked(bool locked) async {
+    if (kIsWeb) return;
+    await _storage.write(key: _lockedKey, value: '$locked');
+  }
 
   Future<SecretKey> _dek() async {
     final dek = await _storage.read(key: _dekKey);
@@ -53,6 +62,7 @@ class SecurityService {
   /// random data-encryption key available for biometric unlock without ever
   /// storing the human-readable master password.
   Future<void> storeDek(SecretKey dek) async {
+    if (kIsWeb) return;
     final dekBytes = await dek.extractBytes();
     await _storage.write(key: _dekKey, value: base64Encode(dekBytes));
     _encryptionEnabled = true;
@@ -61,6 +71,7 @@ class SecurityService {
   /// Reads the DEK from the OS keystore/keychain. Returns `null` when none
   /// has been stored.
   Future<SecretKey?> readDek() async {
+    if (kIsWeb) return null;
     final dekB64 = await _storage.read(key: _dekKey);
     if (dekB64 == null) return null;
     return SecretKeyData(base64Decode(dekB64));
@@ -68,6 +79,7 @@ class SecurityService {
 
   /// Removes the DEK from the OS keystore/keychain.
   Future<void> clearDek() async {
+    if (kIsWeb) return;
     await _storage.delete(key: _dekKey);
     await _storage.delete(key: _lockedKey);
     _encryptionEnabled = false;

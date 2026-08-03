@@ -18,3 +18,14 @@
 # Keep generic signatures (setAccessible / reflection used by plugins)
 -keepattributes Signature,InnerClasses,EnclosingMethod
 -keepattributes RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations
+
+# ---- Google Play Core (referenced by Flutter's deferred component manager) ----
+# These classes are NOT present in a direct APK build (no Play Store dynamic
+# delivery). Tell R8 to ignore missing references instead of failing the build.
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.** { *; }
+
+# ---- Flutter Play Store deferred component stubs ----
+# R8 strict mode complains about these even when deferred components are off.
+-dontwarn io.flutter.embedding.android.FlutterPlayStoreSplitApplication
+-dontwarn io.flutter.embedding.engine.deferredcomponents.**

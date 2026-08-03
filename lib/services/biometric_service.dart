@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:local_auth/local_auth.dart';
 
 class BiometricService {
@@ -5,6 +6,7 @@ class BiometricService {
 
   /// Checks if biometric/device-level authentication is supported.
   static Future<bool> isBiometricsAvailable() async {
+    if (kIsWeb) return false;
     try {
       final canCheck = await _auth.canCheckBiometrics;
       final isSupported = await _auth.isDeviceSupported();
@@ -16,12 +18,13 @@ class BiometricService {
 
   /// Triggers the system biometric authentication dialog.
   static Future<bool> authenticate() async {
+    if (kIsWeb) return false;
     try {
       return await _auth.authenticate(
         localizedReason: 'Authenticate to unlock your Noteflow database',
         options: const AuthenticationOptions(
           stickyAuth: true,
-          biometricOnly: false, // Allows PIN/passcode fallback on host OS
+          biometricOnly: false,
         ),
       );
     } catch (_) {
