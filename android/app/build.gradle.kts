@@ -19,7 +19,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.yourname.noteflow"
+    namespace = "com.authorss81.noteflow"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -29,8 +29,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Replace with your own globally unique Application ID.
-        applicationId = "com.yourname.noteflow"
+        // Globally unique Application ID (R1-13). Do NOT change after the app
+        // ships — Android treats a different id as a different app.
+        applicationId = "com.authorss81.noteflow"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
