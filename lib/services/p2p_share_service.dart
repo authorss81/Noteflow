@@ -220,6 +220,18 @@ class P2pShareService {
         .join();
   }
 
+  /// Stops the HTTP server + UDP socket and clears handshake tokens without
+  /// disposing the streams, so [startServer] can run again after a restore
+  /// (CORR-36).
+  Future<void> stopServer() async {
+    await _server?.close(force: true);
+    _server = null;
+    _udpSocket?.close();
+    _udpSocket = null;
+    _peerTokens.clear();
+    _sessionTokens.clear();
+  }
+
   void dispose() {
     _server?.close();
     _udpSocket?.close();

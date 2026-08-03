@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/stroke.dart';
 import '../theme/app_theme.dart';
+import '../core/ids.dart';
 
 class AnnotationCanvas extends StatefulWidget {
   const AnnotationCanvas({
@@ -177,7 +178,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
 
   List<Stroke> get strokes => _strokes;
 
-  String _strokeId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  String _strokeId() => newId();
 
   void _zoomAt(Offset focal, double scale) {
     final m = _transform.value.clone()

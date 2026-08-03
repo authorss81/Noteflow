@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import '../data/database.dart' hide Notebook, Section;
 import '../data/repository.dart';
 import '../models/note_models.dart';
 import '../services/autosave_service.dart';
@@ -13,6 +14,7 @@ import '../services/p2p_share_service.dart';
 import '../services/plugin_loader_service.dart';
 import '../services/security_service.dart';
 import '../theme/app_theme.dart';
+import '../core/ids.dart';
 
 /// Central app state: theme, active notebook/section/page, and navigation.
 class AppState extends ChangeNotifier {
@@ -35,10 +37,10 @@ class AppState extends ChangeNotifier {
     p2pNotification = null;
   }
 
-  final NoteRepository _repo;
+  NoteRepository _repo;
   final SettingsService _settings;
 
-  final AutosaveService _autosave;
+  AutosaveService _autosave;
   AutosaveService get autosave => _autosave;
   NoteRepository get repo => _repo;
   SettingsService get settings => _settings;
@@ -342,7 +344,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  String _uuid() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  String _uuid() => newId();
 
   /// Generates a cryptographically random 16-byte salt (base64-encoded).
   static List<int> _randomSalt() {
@@ -444,6 +446,34 @@ class AppState extends ChangeNotifier {
     _repo.encryptionKey = null;
     _authenticated = false;
     notifyListeners();
+  }
+
+  /// Graceful reload after a backup restore (CORR-36).
+  ///
+  /// The DB file on disk has been replaced, so the old connection, autosave
+  /// service, in-memory tree and (crucially) the vault DEK are all stale. We
+  /// swap in a fresh connection and re-lock instead of `exit(0)` — a hard kill
+  /// can corrupt the just-restored file if the process dies mid-write.
+  ///
+  /// Master-password prefs are intentionally kept: they wrap the same DEK the
+  /// backup was encrypted with, so unlocking with the existing password
+  /// decrypts the restored data.
+  Future<void> reloadAfterRestore() async {
+    await _p2pShare.stopServer();
+    _autosave.detach();
+    await _repo.closeDatabase();
+    _repo = NoteRepository(AppDatabase());
+    _autosave = AutosaveService(_repo);
+    _notebooks = [];
+    _sections = [];
+    _pages = [];
+    _trashed = [];
+    _recent = [];
+    _notebook = null;
+    _section = null;
+    _page = null;
+    lock();
+    await bootstrap();
   }
 
   /// One-time migration: rewrites any legacy plaintext metadata to encrypted

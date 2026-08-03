@@ -9,6 +9,7 @@ import '../models/note_models.dart';
 import '../models/stroke.dart';
 import '../services/import_service.dart';
 import '../services/encryption_service.dart';
+import '../core/ids.dart';
 
 /// High-level access to notes data, abstracting the database.
 class NoteRepository {
@@ -367,5 +368,5 @@ class NoteRepository {
     }
   }
 
-  String _id() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  String _id() => newId();
 }

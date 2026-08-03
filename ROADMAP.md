@@ -97,13 +97,14 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 29. **R1-29 Kill fake OCR/plugins.** OCR returns hard-coded text ("Invoice #INV-2026", "Store: Noteflow Inc.") keyed on title; `downloadPlugin` is a fake progress timer. Implement real on-device OCR or remove; drop fake "downloads". (`home_screen.dart:2003-2059`, `plugin_loader_service.dart:16-65`)
 
 ### R1-CORRECTNESS (races, leaks, silent bugs)
-30. **File leaks on cascade delete.** `deleteNotebook`/`deleteSection` → `db.deletePage` removes DB rows only, never the `imports/` files (only `emptyTrash`/per-page cleanup does). Return deleted pages' `sourceFilePath`s and delete files. (`repository.dart:250-261`, `database.dart:138-173,549-553`)
-31. **P2P listener leak.** `_setupP2pListener` `addListener` without `removeListener` → every unlock creates a new HomeScreen subscriber; N duplicate SnackBars after repeated unlocks. Add `dispose`+remove. (`home_screen.dart:44-59`)
-32. **`_reloadTree` async race.** Overlapping reloads interleave; last *completion* wins (can show stale notebook). Add monotonic reload token / serialize mutations. (`app_state.dart:132-161`)
-33. **Autosave flush fire-and-forget in `dispose()`** (unawaited, then `detach()` cancels timers) → pending strokes can be lost on process kill; also no `PopScope` flush on system back. (`editor_screen.dart:93-100`, `autosave_service.dart:81-96`)
-34. **"Current version" highlight never works** — comparing `List<Stroke>` with `==` uses identity, always `false`. (`editor_screen.dart:1497,1210`)
-35. **Random `_strokeId`/`_uuid` collisions** (µs timestamp) → PK conflicts / silent overwrite. Use uuid/CSPRNG. (`annotation_canvas.dart:180`, `app_state.dart:373`, `repository.dart:340`)
-36. **`exit(0)` after backup restore** — hard-kill anti-pattern, can corrupt DB; prefer graceful re-nav. (`home_screen.dart:491`)
+- ✅ 30-36 done (`e4b1e6e` for 30-34, next commit for 35-36)
+30. **File leaks on cascade delete.** ~~`deleteNotebook`/`deleteSection` → `db.deletePage` removes DB rows only, never the `imports/` files (only `emptyTrash`/per-page cleanup does).~~ ✅ Return deleted pages' `sourceFilePath`s and delete files. (`repository.dart:310-336`)
+31. **P2P listener leak.** ~~`_setupP2pListener` `addListener` without `removeListener`.~~ ✅ `dispose`+remove. (`home_screen.dart`)
+32. **`_reloadTree` async race.** ~~Overlapping reloads interleave.~~ ✅ Monotonic reload token. (`app_state.dart:168`)
+33. **Autosave flush fire-and-forget in `dispose()`.** ~~unawaited, then `detach()` cancels timers.~~ ✅ flush captures page id before detach; pending writes survive. (`autosave_service.dart`)
+34. **"Current version" highlight never works.** ~~`List<Stroke>` `==` identity.~~ ✅ normalized JSON compare. (`editor_screen.dart:812`)
+35. **Random `_strokeId`/`_uuid` collisions** (µs timestamp) → PK conflicts / silent overwrite. ✅ shared CSPRNG 128-bit `newId()` (`lib/core/ids.dart`), used by stroke/notebook/section/page ids. (`annotation_canvas.dart`, `app_state.dart`, `repository.dart`)
+36. **`exit(0)` after backup restore.** ~~hard-kill anti-pattern.~~ ✅ graceful `reloadAfterRestore()`: swap in fresh `AppDatabase`/`NoteRepository`, stop P2P, re-lock, re-bootstrap; master-password prefs kept so the existing password still unlocks the restored vault. (`app_state.dart`, `home_screen.dart:533`)
 
 ### R1-Release & CI
 37. Replace placeholder `applicationId`; create prod keystore (`key.properties` secret in GH Actions); build **AAB** not just debug APK; pin `drift_dev` version; `-Xmx8G` in `gradle.properties` risks GitHub runner OOM → reduce to 4G.

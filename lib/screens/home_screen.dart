@@ -537,12 +537,15 @@ class _MaintenanceMenu extends StatelessWidget {
           builder: (ctx) => AlertDialog(
             title: const Text('Restore Completed'),
             content: const Text(
-              'Database and imports have been restored successfully. The application will now close to reload the new database files.',
+              'Database and imports have been restored successfully. The app will now reload the restored data.',
             ),
             actions: [
               FilledButton(
-                onPressed: () => exit(0),
-                child: const Text('Close App'),
+                onPressed: () async {
+                  Navigator.of(ctx, rootNavigator: true).pop();
+                  await app.reloadAfterRestore();
+                },
+                child: const Text('Reload'),
               ),
             ],
           ),
