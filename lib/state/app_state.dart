@@ -165,11 +165,19 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
+  /// Monotonic token guarding [_reloadTree]: only the most recent reload may
+  /// commit its results, so overlapping reloads can't interleave and leave a
+  /// stale tree visible (CORR-32).
+  int _reloadToken = 0;
+
   Future<void> _reloadTree({
     String? selectNotebook,
     String? selectSection,
   }) async {
-    _notebooks = await _repo.notebooks();
+    final token = ++_reloadToken;
+    final notebooks = await _repo.notebooks();
+    if (token != _reloadToken) return;
+    _notebooks = notebooks;
     if (selectNotebook != null) {
       _notebook = _findOrFirst(_notebooks, selectNotebook);
     } else {
@@ -180,16 +188,21 @@ class AppState extends ChangeNotifier {
       _pages = [];
       _section = null;
       _page = null;
+      notifyListeners();
       return;
     }
-    _sections = await _repo.sections(_notebook!.id);
+    final sections = await _repo.sections(_notebook!.id);
+    if (token != _reloadToken) return;
+    _sections = sections;
     if (selectSection != null) {
       _section = _findOrFirst(_sections, selectSection);
     } else if (_section == null || _section!.notebookId != _notebook!.id) {
       _section = _sections.isNotEmpty ? _sections.first : null;
     }
     if (_section != null) {
-      _pages = await _repo.pages(_section!.id);
+      final pages = await _repo.pages(_section!.id);
+      if (token != _reloadToken) return;
+      _pages = pages;
     } else {
       _pages = [];
     }

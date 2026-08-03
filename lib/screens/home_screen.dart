@@ -32,6 +32,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  AppState? _p2pApp;
+  VoidCallback? _p2pListener;
+
   @override
   void initState() {
     super.initState();
@@ -41,10 +44,24 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  @override
+  void dispose() {
+    // CORR-31: remove the listener on dispose — every unlock created a new
+    // HomeScreen that re-registered, leaking subscriptions and producing
+    // duplicate SnackBars.
+    final app = _p2pApp;
+    final listener = _p2pListener;
+    if (app != null && listener != null) {
+      app.removeListener(listener);
+    }
+    super.dispose();
+  }
+
   void _setupP2pListener() {
     if (!mounted) return;
     final app = context.read<AppState>();
-    app.addListener(() {
+    _p2pApp = app;
+    _p2pListener = () {
       if (app.p2pNotification != null && mounted) {
         final msg = app.p2pNotification!;
         app.clearP2pNotification();
@@ -55,7 +72,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
-    });
+    };
+    app.addListener(_p2pListener!);
   }
 
   Future<void> _checkWelcome() async {

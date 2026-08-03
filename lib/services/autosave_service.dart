@@ -65,12 +65,18 @@ class AutosaveService extends ChangeNotifier {
   Future<void> manualSnapshot(List<Stroke> strokes, {String label = ''}) =>
       _takeSnapshot(strokes: strokes, label: label);
 
-  Future<void> _takeSnapshot({List<Stroke>? strokes, bool auto = false, String label = ''}) async {
-    if (_activePageId == null) return;
-    final current = strokes ?? await _repo.strokesFor(_activePageId!);
+  Future<void> _takeSnapshot({
+    String? pageId,
+    List<Stroke>? strokes,
+    bool auto = false,
+    String label = '',
+  }) async {
+    final pid = pageId ?? _activePageId;
+    if (pid == null) return;
+    final current = strokes ?? await _repo.strokesFor(pid);
     _snapshotCount++;
     final autoLabel = auto ? 'Auto #$_snapshotCount' : label;
-    await _repo.snapshot(_activePageId!, _repo.encodeStrokes(current), label: autoLabel);
+    await _repo.snapshot(pid, _repo.encodeStrokes(current), label: autoLabel);
     if (auto) {
       _lastSavedAt = DateTime.now();
       notifyListeners();
@@ -78,11 +84,15 @@ class AutosaveService extends ChangeNotifier {
   }
 
   /// Flush pending saves + take a final snapshot. Call on page close.
+  ///
+  /// CORR-33: captures the page id synchronously so a subsequent [detach]
+  /// (from `dispose()` in the editor) can't silently cancel the pending write.
   Future<void> flush(List<Stroke> strokes) async {
+    final pageId = _activePageId;
     _saveTimer?.cancel();
-    if (_activePageId != null && _dirty) {
-      await _repo.saveStrokes(_activePageId!, strokes);
-      await _takeSnapshot(strokes: strokes, auto: true);
+    if (pageId != null && _dirty) {
+      await _repo.saveStrokes(pageId, strokes);
+      await _takeSnapshot(pageId: pageId, strokes: strokes, auto: true);
       _dirty = false;
     }
   }

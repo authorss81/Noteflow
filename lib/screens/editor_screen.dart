@@ -785,6 +785,12 @@ class _VersionsSheetState extends State<_VersionsSheet> {
     );
   }
 
+  bool _sameStrokes(List<Stroke> a, List<Stroke> b) {
+    if (identical(a, b)) return true;
+    return widget.autosave.repo.encodeStrokes(a) ==
+        widget.autosave.repo.encodeStrokes(b);
+  }
+
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
@@ -809,7 +815,9 @@ class _VersionsSheetState extends State<_VersionsSheet> {
                       title: const Text('Current version'),
                       trailing: const Text('now',
                           style: TextStyle(color: Colors.grey)),
-                      selected: _preview == widget.current,
+                      // CORR-34: List<Stroke> == compares by identity, so the
+                      // highlight never matched. Compare normalized JSON instead.
+                      selected: _sameStrokes(_preview, widget.current),
                     );
                   }
                   final v = widget.versions[i - 1];

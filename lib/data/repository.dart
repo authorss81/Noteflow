@@ -193,7 +193,6 @@ class NoteRepository {
       _db.renameNotebook(id, await _encryptMeta(name));
   Future<void> renameSection(String id, String name) async =>
       _db.renameSection(id, await _encryptMeta(name));
-  Future<void> deleteSection(String id) => _db.deleteSection(id);
 
   /// Permanently deletes every trashed page (and their imported files).
   Future<void> emptyTrash() async {
@@ -308,7 +307,33 @@ class NoteRepository {
         createdAt: s.createdAt,
       ));
 
-  Future<void> deleteNotebook(String id) => _db.deleteNotebook(id);
+  Future<void> deleteNotebook(String id) async {
+    // Collect imported files first: cascade delete removes rows only, never
+    // the files in imports/ (CORR-30).
+    final paths = <String>[];
+    for (final s in await _db.sectionsFor(id)) {
+      for (final p in await _db.pagesFor(s.id, includeDeleted: true)) {
+        final f = p.sourceFilePath;
+        if (f != null) paths.add(f);
+      }
+    }
+    await _db.deleteNotebook(id);
+    await _deleteStoredFiles(paths);
+  }
+
+  Future<void> deleteSection(String id) async {
+    final pages = await _db.pagesFor(id, includeDeleted: true);
+    final paths =
+        pages.map((p) => p.sourceFilePath).whereType<String>().toList();
+    await _db.deleteSection(id);
+    await _deleteStoredFiles(paths);
+  }
+
+  Future<void> _deleteStoredFiles(List<String> paths) async {
+    for (final path in paths) {
+      await ImportService().deleteStoredFile(path);
+    }
+  }
 
   /// One-time migration that rewrites any legacy plaintext metadata (notebook
   /// names, section names, page titles, tag names) to DEK-encrypted form.
