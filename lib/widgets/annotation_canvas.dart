@@ -295,18 +295,25 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
                     if (widget.tool == StrokeTool.select) return;
                     _endStroke(d.velocity.pixelsPerSecond.distance > 0 ? 1.0 : 0.0);
                   },
-                  child: SizedBox(
-                    width: 1200,
-                    height: 1600,
-                    child: CustomPaint(
-                      painter: _CanvasPainter(
-                        strokes: _strokes,
-                        inProgress: _inProgressStroke(),
-                        backgroundImage: widget.backgroundImage,
-                        template: widget.template,
-                        palette: PaperPalette.of(
-                            themeModeOf(Theme.of(context).colorScheme)),
-                        canvasColor: canvasColor,
+                  child: Semantics(
+                    label: 'Drawing Canvas. Use drawing tools to annotate or pan/zoom to navigate.',
+                    value: '${_strokes.length} drawing strokes',
+                    container: true,
+                    child: ExcludeSemantics(
+                      child: SizedBox(
+                        width: 1200,
+                        height: 1600,
+                        child: CustomPaint(
+                          painter: _CanvasPainter(
+                            strokes: _strokes,
+                            inProgress: _inProgressStroke(),
+                            backgroundImage: widget.backgroundImage,
+                            template: widget.template,
+                            palette: PaperPalette.of(
+                                themeModeOf(Theme.of(context).colorScheme)),
+                            canvasColor: canvasColor,
+                          ),
+                        ),
                       ),
                     ),
                   ),

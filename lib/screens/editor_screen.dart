@@ -864,17 +864,26 @@ class _Toolbar extends StatelessWidget {
               Container(width: 1, height: 24, color: scheme.outlineVariant),
               const SizedBox(width: 8),
               ..._EditorBody._colors.map((c) => InkWell(
-                    onTap: () => onColor(c),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color: c,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: c == color ? scheme.primary : Colors.transparent,
-                          width: 2,
+                    borderRadius: BorderRadius.circular(22),
+                    onTap: () {
+                      onColor(c);
+                      HapticFeedback.selectionClick();
+                    },
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Center(
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: c == color ? scheme.primary : Colors.transparent,
+                              width: 2,
+                            ),
+                          ),
                         ),
                       ),
                     ),
