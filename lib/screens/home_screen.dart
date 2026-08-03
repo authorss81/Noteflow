@@ -219,6 +219,8 @@ class _HomeScreenState extends State<HomeScreen> {
             pageFileName,
             pngBytes!.buffer.asUint8List(),
           );
+          // R1-15: release the raster memory as soon as it's been written.
+          image.dispose();
           final pageTitle = pages.length == 1
               ? f.name
               : '${f.name} (page ${pageIndex + 1})';
