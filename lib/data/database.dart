@@ -187,6 +187,16 @@ class AppDatabase extends _$AppDatabase {
   Future<Page?> pageById(String id) =>
       (select(pages)..where((t) => t.id.equals(id))).getSingleOrNull();
 
+  /// Records which PDF page a multi-page document is currently showing so it
+  /// can resume on the same page (R1-22).
+  Future<void> setPageIndex(String id, int index) =>
+      (update(pages)..where((t) => t.id.equals(id)))
+          .write(PagesCompanion(pageIndex: Value(index)));
+
+  Future<void> movePage(String pageId, String sectionId) =>
+      (update(pages)..where((t) => t.id.equals(pageId)))
+          .write(PagesCompanion(sectionId: Value(sectionId)));
+
   Future<List<Page>> trashedPages() =>
       (select(pages)..where((t) => t.deleted.equals(true))).get();
 

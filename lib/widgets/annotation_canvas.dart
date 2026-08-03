@@ -17,6 +17,7 @@ class AnnotationCanvas extends StatefulWidget {
     this.backgroundImage,
     this.template,
     this.onChanged,
+    this.page = 0,
   });
 
   final StrokeTool tool;
@@ -26,6 +27,10 @@ class AnnotationCanvas extends StatefulWidget {
   final ui.Image? backgroundImage;
   final String? template;
   final ValueChanged<List<Stroke>>? onChanged;
+
+  /// PDF page (0-based) that newly drawn strokes belong to (R1-22). Always 0
+  /// for non-PDF pages.
+  final int page;
 
   @override
   State<AnnotationCanvas> createState() => AnnotationCanvasState();
@@ -50,9 +55,25 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
   @override
   void didUpdateWidget(covariant AnnotationCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.initialStrokes, widget.initialStrokes)) {
+    // Reset only when the stroke content actually changed, not just the list
+    // instance. The editor builds a fresh filtered list every rebuild (R1-22);
+    // without the content check every setState would wipe the in-progress
+    // stroke and the undo/redo stacks.
+    if (!identical(oldWidget.initialStrokes, widget.initialStrokes) &&
+        !_sameStrokeList(oldWidget.initialStrokes, widget.initialStrokes)) {
       _strokes = List.of(widget.initialStrokes);
+      _undo.clear();
+      _redo.clear();
     }
+  }
+
+  /// True when both lists hold the same [Stroke] instances in the same order.
+  static bool _sameStrokeList(List<Stroke> a, List<Stroke> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i])) return false;
+    }
+    return true;
   }
 
   /// GestureDetector is the direct child of InteractiveViewer, so
@@ -84,6 +105,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
           color: widget.color,
           width: widget.width * (1 + pressure),
           points: List.of(_points!),
+          page: widget.page,
         )
       ]);
     } else if (tool == StrokeTool.rect ||
@@ -99,6 +121,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
           filled: false,
           start: _dragStart,
           end: _points!.last,
+          page: widget.page,
         )
       ]);
     }
@@ -261,6 +284,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
         color: widget.color,
         width: widget.width,
         points: _points!,
+        page: widget.page,
       );
     }
     if (tool == StrokeTool.rect ||
@@ -275,6 +299,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
         width: widget.width,
         start: _dragStart,
         end: _points!.last,
+        page: widget.page,
       );
     }
     return null;
@@ -309,6 +334,7 @@ class AnnotationCanvasState extends State<AnnotationCanvas> {
                       width: widget.width,
                       text: ctrl.text,
                       start: p,
+                      page: widget.page,
                     )
                   ]);
                 }

@@ -98,6 +98,30 @@ class _MarkdownPreviewScreenState extends State<MarkdownPreviewScreen> {
                   : MarkdownBody(
                       data: _text,
                       selectable: true,
+                      imageBuilder: (uri, title, alt) {
+                        final scheme = uri.scheme.toLowerCase();
+                        if (scheme == 'http' || scheme == 'https') {
+                          return Container(
+                            padding: const EdgeInsets.all(8),
+                            color: Colors.red.withAlpha(26),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.broken_image, color: Colors.red),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'External image blocked (${uri.host})',
+                                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        if (scheme == 'file') {
+                          return Image.file(File(uri.toFilePath()));
+                        }
+                        return const SizedBox.shrink();
+                      },
                       styleSheet: MarkdownStyleSheet(
                         p: TextStyle(color: scheme.onSurface),
                         h1: TextStyle(

@@ -31,6 +31,10 @@ class Stroke {
   final Offset? start;
   final Offset? end;
 
+  /// PDF page (0-based) this annotation belongs to. Always 0 for non-PDF
+  /// pages. Lets a single PDF [Stroke] set keep per-page annotations (R1-22).
+  final int page;
+
   const Stroke({
     required this.id,
     required this.tool,
@@ -41,6 +45,7 @@ class Stroke {
     this.points = const [],
     this.start,
     this.end,
+    this.page = 0,
   });
 
   Stroke copyWith({
@@ -52,6 +57,7 @@ class Stroke {
     List<Offset>? points,
     Offset? start,
     Offset? end,
+    int? page,
   }) {
     return Stroke(
       id: id,
@@ -63,6 +69,7 @@ class Stroke {
       points: points ?? this.points,
       start: start ?? this.start,
       end: end ?? this.end,
+      page: page ?? this.page,
     );
   }
 
@@ -77,6 +84,7 @@ class Stroke {
         'points': points.map((p) => [p.dx, p.dy]).toList(),
         'start': start == null ? null : [start!.dx, start!.dy],
         'end': end == null ? null : [end!.dx, end!.dy],
+        'page': page,
       };
 
   static Stroke fromJson(Map<String, Object?> json) {
@@ -96,6 +104,7 @@ class Stroke {
           .toList(),
       start: _toOffset(json['start']),
       end: _toOffset(json['end']),
+      page: json['page'] as int? ?? 0,
     );
   }
 

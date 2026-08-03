@@ -1,34 +1,7 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:archive/archive_io.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class PluginLoaderService {
-  final SharedPreferences prefs;
-  PluginLoaderService(this.prefs);
-
-  /// Checks if a dynamic plugin is installed.
-  bool isPluginInstalled(String pluginId) {
-    return prefs.getBool('plugin_installed_$pluginId') ?? false;
-  }
-
-  /// Simulates downloading and installing a dynamic plugin with progress callbacks.
-  Stream<double> downloadPlugin(String pluginId) async* {
-    double progress = 0.0;
-    while (progress < 1.0) {
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      progress += 0.1;
-      if (progress > 1.0) progress = 1.0;
-      yield progress;
-    }
-    await prefs.setBool('plugin_installed_$pluginId', true);
-  }
-
-  /// Uninstalls/removes a plugin.
-  Future<void> uninstallPlugin(String pluginId) async {
-    await prefs.remove('plugin_installed_$pluginId');
-  }
-
   /// Converts a DOCX file to Markdown text natively by parsing the inner w:t XML nodes.
   static String convertDocxToMarkdown(List<int> docxBytes) {
     try {

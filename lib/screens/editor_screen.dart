@@ -6,8 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:pdf/pdf.dart';
+import 'package:pdf/pdf.dart' hide PdfDocument;
 import 'package:pdf/widgets.dart' as pw;
+import 'package:pdfrx/pdfrx.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -47,6 +48,12 @@ class _EditorScreenState extends State<EditorScreen> {
   bool _previewMarkdown = false;
   AppLifecycleListener? _lifecycle;
 
+  // Multi-page PDF support (R1-22): the page count and the current page's
+  // annotation slice (strokes are stamped with their PDF page).
+  int _pdfPageCount = 0;
+  List<Stroke> _pageStrokes = [];
+  bool get _isPdf => _page.sourceFileType == 'pdf';
+
   @override
   void initState() {
     super.initState();
@@ -84,12 +91,72 @@ class _EditorScreenState extends State<EditorScreen> {
     _strokes = strokes;
 
     final src = _page.sourceFilePath;
+    final type = _page.sourceFileType;
+    final oldBg = _background;
+    _background = null;
+    _pageStrokes = _isPdf
+        ? _strokes.where((s) => s.page == _page.pageIndex).toList()
+        : _strokes;
     if (src != null) {
-      final f = await _import.loadBackground(src, _page.sourceFileType ?? 'image');
+      if (type == 'pdf') {
+        final count = await _import.pdfPageCount(src);
+        if (!mounted) return;
+        setState(() => _pdfPageCount = count);
+      } else {
+        _pdfPageCount = 0;
+      }
+      final f = await _import.loadBackground(
+          src, type ?? 'image', pageIndex: _page.pageIndex);
+      oldBg?.dispose();
       if (mounted) setState(() => _background = f);
+    } else {
+      oldBg?.dispose();
+      _pdfPageCount = 0;
     }
     if (mounted) setState(() => _loadingBg = false);
     widget.autosave.attach(_page.id);
+  }
+
+  /// Flips a multi-page PDF to another page: persists the new [NotePage]
+  /// pageIndex so it resumes there, reloads the background, and swaps the
+  /// canvas to that page's annotations (R1-22).
+  Future<void> _goToPdfPage(int index) async {
+    if (!_isPdf || index < 0 || index >= _pdfPageCount) return;
+    if (index == _page.pageIndex) return;
+    setState(() => _loadingBg = true);
+    _page = _page.copyWith(pageIndex: index);
+    await widget.autosave.repo.setPageIndex(_page.id, index);
+    final oldBg = _background;
+    _background = null;
+    _pageStrokes = _strokes.where((s) => s.page == index).toList();
+    final src = _page.sourceFilePath;
+    if (src != null) {
+      final f = await _import.loadBackground(
+          src, _page.sourceFileType ?? 'image', pageIndex: index);
+      oldBg?.dispose();
+      if (mounted) setState(() => _background = f);
+    } else {
+      oldBg?.dispose();
+    }
+    if (mounted) setState(() => _loadingBg = false);
+  }
+
+  void _showPdfStrip() {
+    final src = _page.sourceFilePath;
+    if (src == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => _PdfPageStrip(
+        import: _import,
+        path: src,
+        count: _pdfPageCount,
+        current: _page.pageIndex,
+        onSelect: (i) async {
+          Navigator.pop(ctx);
+          await _goToPdfPage(i);
+        },
+      ),
+    );
   }
 
   @override
@@ -102,8 +169,17 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _onStrokesChanged(List<Stroke> s) {
-    _strokes = s;
-    widget.autosave.scheduleSave(s);
+    if (_isPdf) {
+      // The canvas only edits the current PDF page's slice; re-merge it into
+      // the full per-page list before persisting (R1-22).
+      final others = _strokes.where((x) => x.page != _page.pageIndex).toList();
+      _strokes = [...others, ...s];
+      _pageStrokes = s;
+    } else {
+      _strokes = s;
+      _pageStrokes = s;
+    }
+    widget.autosave.scheduleSave(_strokes);
   }
 
   void _renamePage() {
@@ -469,6 +545,18 @@ IconButton(
                 .toList(),
           ),
         ],
+        bottom: _isPdf && _pdfPageCount > 1
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(44),
+              child: _PdfPager(
+                current: _page.pageIndex,
+                count: _pdfPageCount,
+                onPrev: () => _goToPdfPage(_page.pageIndex - 1),
+                onNext: () => _goToPdfPage(_page.pageIndex + 1),
+                onShowAll: _showPdfStrip,
+              ),
+            )
+          : null,
       ),
       body: _loadingBg
           ? const Center(child: CircularProgressIndicator())
@@ -491,7 +579,8 @@ IconButton(
               tool: _tool,
               color: _color,
               width: _width,
-              strokes: _strokes,
+              strokes: _isPdf ? _pageStrokes : _strokes,
+              canvasPage: _isPdf ? _page.pageIndex : 0,
               background: _background,
               template: _page.template,
               onChanged: _onStrokesChanged,
@@ -524,8 +613,16 @@ IconButton(
           await widget.autosave.manualSnapshot(_strokes, label: 'Before restore');
           if (!mounted) return;
           _strokes = s;
-          _canvasKey.currentState?.setStrokes(s);
-          widget.autosave.scheduleSave(s);
+          if (_isPdf) {
+            // The restored snapshot covers all PDF pages; show only the
+            // current page's slice on the canvas (R1-22).
+            _pageStrokes = s.where((x) => x.page == _page.pageIndex).toList();
+            _canvasKey.currentState?.setStrokes(_pageStrokes);
+          } else {
+            _pageStrokes = s;
+            _canvasKey.currentState?.setStrokes(s);
+          }
+          widget.autosave.scheduleSave(_strokes);
         },
       ),
     );
@@ -577,6 +674,7 @@ class _EditorBody extends StatelessWidget {
     required this.color,
     required this.width,
     required this.strokes,
+    this.canvasPage = 0,
     required this.background,
     this.template,
     required this.onChanged,
@@ -591,6 +689,7 @@ class _EditorBody extends StatelessWidget {
   final Color color;
   final double width;
   final List<Stroke> strokes;
+  final int canvasPage;
   final ui.Image? background;
   final String? template;
   final ValueChanged<List<Stroke>> onChanged;
@@ -631,6 +730,7 @@ class _EditorBody extends StatelessWidget {
               backgroundImage: background,
               template: template,
               onChanged: onChanged,
+              page: canvasPage,
             ),
           ),
         ),
@@ -691,6 +791,7 @@ class _Toolbar extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
+              _toolBtn(context, StrokeTool.select, Icons.pan_tool, 'Pan/Zoom'),
               _toolBtn(context, StrokeTool.pen, Icons.draw, 'Pen'),
               _toolBtn(context, StrokeTool.highlighter, Icons.border_color, 'Highlighter'),
               _toolBtn(context, StrokeTool.eraser, Icons.cleaning_services_outlined, 'Eraser'),
@@ -847,6 +948,188 @@ class _VersionsSheetState extends State<_VersionsSheet> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Compact prev/next page bar shown under the AppBar for multi-page PDFs
+/// (R1-22).
+class _PdfPager extends StatelessWidget {
+  const _PdfPager({
+    required this.current,
+    required this.count,
+    required this.onPrev,
+    required this.onNext,
+    required this.onShowAll,
+  });
+
+  final int current;
+  final int count;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+  final VoidCallback onShowAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHighest,
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Previous page',
+            icon: const Icon(Icons.chevron_left),
+            onPressed: current > 0 ? onPrev : null,
+          ),
+          Text('${current + 1} / $count'),
+          IconButton(
+            tooltip: 'Next page',
+            icon: const Icon(Icons.chevron_right),
+            onPressed: current < count - 1 ? onNext : null,
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'All pages',
+            icon: const Icon(Icons.grid_view),
+            onPressed: onShowAll,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Horizontal thumbnail strip of all PDF pages (R1-22). Opens the document
+/// once (avoiding N decryptions) and renders thumbnails lazily as they scroll
+/// into view; the whole strip is disposed when the sheet closes.
+class _PdfPageStrip extends StatefulWidget {
+  const _PdfPageStrip({
+    required this.import,
+    required this.path,
+    required this.count,
+    required this.current,
+    required this.onSelect,
+  });
+
+  final ImportService import;
+  final String path;
+  final int count;
+  final int current;
+  final ValueChanged<int> onSelect;
+
+  @override
+  State<_PdfPageStrip> createState() => _PdfPageStripState();
+}
+
+class _PdfPageStripState extends State<_PdfPageStrip> {
+  PdfDocument? _doc;
+  final Map<int, ui.Image> _images = {};
+  final Set<int> _loading = {};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.import.openPdf(widget.path).then((doc) {
+      if (!mounted) {
+        doc?.dispose();
+        return;
+      }
+      setState(() => _doc = doc);
+    });
+  }
+
+  @override
+  void dispose() {
+    _doc?.dispose();
+    for (final img in _images.values) {
+      img.dispose();
+    }
+    super.dispose();
+  }
+
+  void _ensure(int index) {
+    final doc = _doc;
+    if (doc == null || _images.containsKey(index) || _loading.contains(index)) {
+      return;
+    }
+    _loading.add(index);
+    widget.import.renderPdfThumbnailFrom(doc, index).then((img) {
+      if (!mounted) return;
+      if (img != null) _images[index] = img;
+      _loading.remove(index);
+      setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      child: SizedBox(
+        height: 190,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              child: Text('Pages (${widget.count})',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Expanded(
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: widget.count,
+                itemBuilder: (context, i) {
+                  _ensure(i);
+                  final img = _images[i];
+                  final isCurrent = i == widget.current;
+                  return GestureDetector(
+                    onTap: () => widget.onSelect(i),
+                    child: Container(
+                      width: 88,
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          width: 2,
+                          color:
+                              isCurrent ? scheme.primary : scheme.outlineVariant,
+                        ),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: img == null
+                                ? const Center(
+                                    child: SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    ),
+                                  )
+                                : Padding(
+                                    padding: const EdgeInsets.all(3),
+                                    child: RawImage(
+                                        image: img, fit: BoxFit.contain),
+                                  ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Text('${i + 1}',
+                                style: const TextStyle(fontSize: 11)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

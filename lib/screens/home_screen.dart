@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import '../services/plugin_loader_service.dart';
 import 'package:flutter/services.dart';
-import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../services/encryption_service.dart';
 import '../services/biometric_service.dart';
@@ -197,10 +196,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!context.mounted) return;
       final ext = import.extensionOf(f.name);
       if (ext == 'docx') {
-        final ok = await _ensurePluginInstalled(context, app, 'libreoffice', 'LibreOffice Converter Plugin', '~18MB');
-        if (!ok) continue;
-        if (!context.mounted) return;
-
         final markdownText = PluginLoaderService.convertDocxToMarkdown(f.bytes);
         final docxTitle = f.name.replaceAll('.docx', '.md');
         final path = await import.persistFile(docxTitle, utf8.encode(markdownText));
@@ -216,41 +211,17 @@ class _HomeScreenState extends State<HomeScreen> {
       final type = import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text';
       final path = await import.persistFile(f.name, f.bytes);
       if (type == 'pdf') {
-        // Multipage PDF: render all pages, create a NotePage per page.
-        final pages = await import.loadPdfPages(path);
-        if (pages.isEmpty) {
-          // Fallback: create a single page with no background.
-          final page = await app.addPage(
-            title: f.name,
-            sourceFilePath: path,
-            sourceFileType: type,
-          );
-          lastPage = page;
-          importedCount++;
-        }
-        for (var i = 0; i < pages.length; i++) {
-          final (image, pageIndex) = pages[i];
-          // Save the rendered page as a PNG file so it persists independently.
-          final pageFileName = '${f.name}_page_${pageIndex + 1}.png';
-          final pngBytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          final pagePath = await import.persistFile(
-            pageFileName,
-            pngBytes!.buffer.asUint8List(),
-          );
-          // R1-15: release the raster memory as soon as it's been written.
-          image.dispose();
-          final pageTitle = pages.length == 1
-              ? f.name
-              : '${f.name} (page ${pageIndex + 1})';
-          final page = await app.addPage(
-            title: pageTitle,
-            sourceFilePath: pagePath,
-            sourceFileType: 'image',
-            pageIndex: pageIndex,
-          );
-          lastPage = page;
-          importedCount++;
-        }
+        // R1-22: a multi-page PDF is ONE document. Only the raw PDF is
+        // persisted (no per-page PNG explosion, no orphaned original) and the
+        // editor renders the current page on demand from the raw file.
+        final page = await app.addPage(
+          title: f.name,
+          sourceFilePath: path,
+          sourceFileType: type,
+          pageIndex: 0,
+        );
+        lastPage = page;
+        importedCount++;
       } else {
         final page = await app.addPage(
           title: f.name,
@@ -1061,59 +1032,6 @@ void promptName(BuildContext context, String title,
   );
 }
 
-Future<bool> _ensurePluginInstalled(BuildContext context, AppState app, String pluginId, String name, String size) async {
-  if (app.pluginLoader.isPluginInstalled(pluginId)) return true;
-
-  final confirm = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Download $name?'),
-      content: Text(
-        'The $name is required for this action. '
-        'Would you like to download and install it now? ($size)',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Download'),
-        ),
-      ],
-    ),
-  );
-
-  if (confirm != true) return false;
-
-  final progressStream = app.pluginLoader.downloadPlugin(pluginId);
-  if (!context.mounted) return false;
-
-  await showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (ctx) => AlertDialog(
-      title: Text('Installing $name'),
-      content: StreamBuilder<double>(
-        stream: progressStream,
-        builder: (ctx, snapshot) {
-          final progress = snapshot.data ?? 0.0;
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              LinearProgressIndicator(value: progress),
-              const SizedBox(height: 12),
-              Text('${(progress * 100).toInt()}% downloaded'),
-            ],
-          );
-        },
-      ),
-    ),
-  );
-  return true;
-}
-
 void confirmDelete(BuildContext context, String title, String body, VoidCallback onConfirm) {
   showDialog<void>(
     context: context,
@@ -1778,7 +1696,7 @@ class _PageTile extends StatelessWidget {
           if (v == 'rename') _rename(context);
           if (v == 'share_p2p') _shareP2p(context);
           if (v == 'split') _splitPageDialog(context);
-          if (v == 'ocr') _runOcr(context);
+          if (v == 'move_section') _moveSectionDialog(context);
           if (v == 'trash') app.trashPage(page.id);
         },
         itemBuilder: (_) => [
@@ -1787,7 +1705,7 @@ class _PageTile extends StatelessWidget {
           const PopupMenuItem(value: 'rename', child: Text('Rename')),
           const PopupMenuItem(value: 'share_p2p', child: Text('Send to local device')),
           const PopupMenuItem(value: 'split', child: Text('Split note page')),
-          const PopupMenuItem(value: 'ocr', child: Text('Extract text (OCR)')),
+          const PopupMenuItem(value: 'move_section', child: Text('Move to Section/Notebook')),
           const PopupMenuItem(value: 'trash', child: Text('Move to trash')),
         ],
       ),
@@ -2043,83 +1961,90 @@ class _PageTile extends StatelessWidget {
     );
   }
 
-  void _runOcr(BuildContext context) async {
-    final ok = await _ensurePluginInstalled(
-      context,
-      app,
-      'tesseract_ocr',
-      'Tesseract OCR Engine',
-      '~12MB',
-    );
-    if (!ok) return;
 
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Running OCR text extraction...')),
-    );
+  void _moveSectionDialog(BuildContext context) async {
+    final notebooks = app.notebooks;
+    final allSections = <String, List<Section>>{}; // notebookId -> sections
 
-    final strokes = await app.repo.strokesFor(page.id);
-    final canvasTexts = strokes
-        .where((s) => s.tool == StrokeTool.text && s.text.trim().isNotEmpty)
-        .map((s) => s.text)
-        .toList();
-
-    final extraTexts = <String>[];
-    if (page.sourceFilePath != null) {
-      final name = page.title.toLowerCase();
-      if (name.contains('invoice')) {
-        extraTexts.addAll(['Invoice #INV-2026', 'Total: \$450.00', 'Paid in full', 'Date: 02/08/2026']);
-      } else if (name.contains('receipt')) {
-        extraTexts.addAll(['Store: Noteflow Inc.', 'Items: Notebook x1, Pen x3', 'Total: \$15.50']);
-      } else {
-        extraTexts.add('OCR Extracted: Handwritten notes detailing project roadmap phase 3 implementation tasks.');
-      }
+    for (final nb in notebooks) {
+      final secs = await app.repo.sections(nb.id);
+      allSections[nb.id] = secs;
     }
 
-    final allText = [...canvasTexts, ...extraTexts].join('\n');
-
     if (!context.mounted) return;
-    if (allText.isEmpty) {
-      showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('OCR Results'),
-          content: const Text('No text could be extracted from this note page.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close'),
-            ),
-          ],
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Move Page'),
+        content: SizedBox(
+          width: 320,
+          height: 400,
+          child: notebooks.isEmpty
+              ? const Center(child: Text('No notebooks found.'))
+              : ListView.builder(
+                  itemCount: notebooks.length,
+                  itemBuilder: (ctx2, i) {
+                    final nb = notebooks[i];
+                    final secs = allSections[nb.id] ?? [];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                          child: Text(
+                            nb.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        if (secs.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 16, bottom: 8),
+                            child: Text('No sections', style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                          ),
+                        ...secs.map((sec) {
+                          final isCurrent = sec.id == page.sectionId;
+                          return ListTile(
+                            contentPadding: const EdgeInsets.only(left: 16, right: 8),
+                            title: Text(sec.name),
+                            trailing: isCurrent
+                                ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
+                                : null,
+                            enabled: !isCurrent,
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Moving page to "${sec.name}"...')),
+                              );
+                              await app.movePage(page.id, sec.id);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Page moved successfully!'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                            },
+                          );
+                        }),
+                        const Divider(),
+                      ],
+                    );
+                  },
+                ),
         ),
-      );
-    } else {
-      showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('OCR Extracted Text'),
-          content: SingleChildScrollView(
-            child: SelectableText(allText),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: allText));
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Copied text to clipboard!')),
-                );
-              },
-              child: const Text('Copy to Clipboard'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      );
-    }
+        ],
+      ),
+    );
   }
 }
 

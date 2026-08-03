@@ -97,7 +97,8 @@ class ImportService {
     final dir = Directory('${docs.path}${Platform.pathSeparator}noteflow'
         '${Platform.pathSeparator}imports');
     await dir.create(recursive: true);
-    final path = '${dir.path}${Platform.pathSeparator}${_stamp()}_$name';
+    final safeName = name.split(RegExp(r'[\\/]')).last;
+    final path = '${dir.path}${Platform.pathSeparator}${_stamp()}_$safeName';
     await File(path).writeAsBytes(await _encryptForStorage(bytes), flush: true);
     return path;
   }
@@ -142,38 +143,27 @@ class ImportService {
   }
 
   /// Loads a page background for any supported source type (image or PDF).
-  Future<ui.Image?> loadBackground(String path, String type) async {
-    if (type == 'pdf') return loadPdfPage(path);
+  /// For PDFs, [pageIndex] selects which page to render (R1-22).
+  Future<ui.Image?> loadBackground(String path, String type,
+      {int pageIndex = 0}) async {
+    if (type == 'pdf') return loadPdfPageAt(path, pageIndex);
     return loadPageImage(path);
   }
 
-/// Renders the first page of a PDF to an image (PDFium does the rendering
-/// via pdfrx; raw BGRA pixels are converted to a ui.Image). Decrypts the
-/// stored PDF bytes first when needed (R1-10). Render resolution is capped to
-/// bound memory on large/native-res PDFs (R1-15).
-Future<ui.Image?> loadPdfPage(String path) async {
+/// Renders PDF page [index] to an image (PDFium via pdfrx; raw BGRA pixels
+/// are converted to a ui.Image). Decrypts the stored PDF bytes first when
+/// needed (R1-10). Render resolution is capped to bound memory on
+/// large/native-res PDFs (R1-15).
+Future<ui.Image?> loadPdfPageAt(String path, int index) async {
   PdfDocument? doc;
   try {
     final bytes = await readDecryptedBytes(path);
     doc = await PdfDocument.openData(bytes);
     final pages = doc.pages;
-    if (pages.isEmpty) return null;
-    final page = pages.first;
+    if (index < 0 || index >= pages.length) return null;
+    final page = pages[index];
     if (!page.isLoaded) return null;
-    final (w, h) = _cappedSize(page.width, page.height);
-    final rendered = await page.render(width: w, height: h);
-    if (rendered == null) return null;
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromPixels(
-      rendered.pixels,
-      rendered.width,
-      rendered.height,
-      ui.PixelFormat.bgra8888,
-      completer.complete,
-    );
-    final image = await completer.future;
-    rendered.dispose();
-    return image;
+    return _renderPdfPage(page);
   } catch (_) {
     return null;
   } finally {
@@ -181,47 +171,82 @@ Future<ui.Image?> loadPdfPage(String path) async {
   }
 }
 
-/// Renders all pages of a PDF to images, returning (image, pageIndex) pairs.
-/// Uses pdfrx to render each page at its native resolution. Decrypts the
-/// stored PDF bytes first when needed (R1-10). Resolution is capped to bound
-/// total memory when a PDF has many high-res pages (R1-15).
-Future<List<(ui.Image, int)>> loadPdfPages(String path) async {
+/// Renders the first page of a PDF (kept for legacy callers).
+Future<ui.Image?> loadPdfPage(String path) => loadPdfPageAt(path, 0);
+
+/// Number of pages in a PDF, or 1 if it can't be read (R1-22).
+Future<int> pdfPageCount(String path) async {
   PdfDocument? doc;
   try {
     final bytes = await readDecryptedBytes(path);
     doc = await PdfDocument.openData(bytes);
-    final pages = doc.pages;
-    final results = <(ui.Image, int)>[];
-    for (var i = 0; i < pages.length; i++) {
-      final page = pages[i];
-      if (!page.isLoaded) continue;
-      final (w, h) = _cappedSize(page.width, page.height);
-      final rendered = await page.render(width: w, height: h);
-      if (rendered == null) continue;
-      final completer = Completer<ui.Image>();
-      ui.decodeImageFromPixels(
-        rendered.pixels,
-        rendered.width,
-        rendered.height,
-        ui.PixelFormat.bgra8888,
-        completer.complete,
-      );
-      final image = await completer.future;
-      rendered.dispose();
-      results.add((image, i));
-    }
-    return results;
+    final n = doc.pages.length;
+    return n < 1 ? 1 : n;
   } catch (_) {
-    return [];
+    return 1;
   } finally {
     await doc?.dispose();
   }
 }
 
-/// Caps the long edge of a PDF page at [_maxRenderDim] logical pixels so a
-/// single page can never allocate unbounded raster memory.
-(int, int) _cappedSize(double width, double height) {
-  const maxDim = 1600.0;
+/// Small render of PDF page [index] for the thumbnail strip (R1-22).
+Future<ui.Image?> renderPdfThumbnail(String path, int index) async {
+  PdfDocument? doc;
+  try {
+    final bytes = await readDecryptedBytes(path);
+    doc = await PdfDocument.openData(bytes);
+    return renderPdfThumbnailFrom(doc, index);
+  } catch (_) {
+    return null;
+  } finally {
+    await doc?.dispose();
+  }
+}
+
+/// Opens a PDF (decrypting stored bytes first) so a caller can render many
+/// thumbnails without re-opening/re-decrypting the file per page (R1-22).
+/// The caller owns the document and must dispose it.
+Future<PdfDocument?> openPdf(String path) async {
+  try {
+    final bytes = await readDecryptedBytes(path);
+    return PdfDocument.openData(bytes);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Renders page [index] of an already-open [doc] at thumbnail size.
+Future<ui.Image?> renderPdfThumbnailFrom(PdfDocument doc, int index) async {
+  final pages = doc.pages;
+  if (index < 0 || index >= pages.length) return null;
+  final page = pages[index];
+  if (!page.isLoaded) return null;
+  return _renderPdfPage(page, maxDim: 140);
+}
+
+/// Renders a single loaded PDF page to a ui.Image, capping the long edge at
+/// [maxDim] logical pixels so a page can never allocate unbounded raster
+/// memory (R1-15).
+Future<ui.Image?> _renderPdfPage(PdfPage page, {double maxDim = 1600}) async {
+  final (w, h) = _cappedSize(page.width, page.height, maxDim: maxDim);
+  final rendered = await page.render(width: w, height: h);
+  if (rendered == null) return null;
+  final completer = Completer<ui.Image>();
+  ui.decodeImageFromPixels(
+    rendered.pixels,
+    rendered.width,
+    rendered.height,
+    ui.PixelFormat.bgra8888,
+    completer.complete,
+  );
+  final image = await completer.future;
+  rendered.dispose();
+  return image;
+}
+
+/// Caps the long edge of a PDF page at [maxDim] logical pixels.
+(int, int) _cappedSize(double width, double height,
+    {double maxDim = 1600}) {
   final long = width > height ? width : height;
   if (long <= maxDim || long <= 0) return (width.round(), height.round());
   final scale = maxDim / long;

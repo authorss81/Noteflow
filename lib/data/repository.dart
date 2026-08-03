@@ -176,16 +176,25 @@ class NoteRepository {
   }
 
   Future<List<NotePage>> searchPages(String query) async {
-    // Titles are encrypted at rest, so SQL LIKE can't be used (R1-10). Decrypt
-    // all active titles and match in memory. This also sidesteps LIKE wildcard
-    // injection from `%`/`_`.
+    // R1-10, R1-27: decrypt active titles & text strokes and match in memory.
     final rows = await _db.allActivePages();
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return [];
     final result = <NotePage>[];
     for (final r in rows) {
       final title = (await _decryptMeta(r.title)).toLowerCase();
-      if (title.contains(q)) result.add(await _pageFromRow(r));
+      var matches = title.contains(q);
+      
+      if (!matches) {
+        final strokes = await strokesFor(r.id);
+        matches = strokes.any((s) =>
+            s.tool == StrokeTool.text &&
+            s.text.toLowerCase().contains(q));
+      }
+      
+      if (matches) {
+        result.add(await _pageFromRow(r));
+      }
     }
     return result;
   }
@@ -202,6 +211,14 @@ class NoteRepository {
       await deletePage(p.id, sourceFilePath: p.sourceFilePath);
     }
   }
+
+  /// Records the currently-viewed page of a multi-page PDF (R1-22).
+  Future<void> setPageIndex(String id, int index) =>
+      _db.setPageIndex(id, index);
+
+  /// Moves a page to a new section (R1-26).
+  Future<void> movePage(String pageId, String sectionId) =>
+      _db.movePage(pageId, sectionId);
 
   Future<NotePage> _pageFromRow(drift.Page p) async => NotePage(
         id: p.id,

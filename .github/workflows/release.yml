@@ -64,12 +64,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: noteflow-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/app-release-unsigned.apk
+          if-no-files-found: warn
 
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
           name: noteflow-release-aab
-          path: build/app/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/bundle/release/app-release-unsigned.aab
+          if-no-files-found: warn

@@ -81,20 +81,19 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 17. **`allowBackup`/metadata plaintext** also breaks Play Data-safety honesty (see R1-10/14).
 
 ### R1-LOW (fix when convenient)
-18. ✅ done (moot) — Sanitize LIKE `%`/`_` in search — search is now in-memory title matching (R1-10), no SQL LIKE. Debounce search ~300 ms (`home_screen.dart:1503`).
-19. Restrict remote images in Markdown (`imageBuilder`) to stop external fetches. (`markdown_preview_screen.dart:97`)
-20. Don't auto-copy note/OCR text to global clipboard; clear after delay. (`home_screen.dart:2044`)
-21. Sanitize imported filenames for path traversal; only persist original PDF bytes if actually referenced. (`import_service.dart:37`, `home_screen.dart:198`)
+19. ✅ done — Restrict remote images in Markdown (`imageBuilder`) to stop external fetches. (`markdown_preview_screen.dart:97`)
+20. ✅ done — Don't auto-copy note/OCR text to global clipboard; clear after delay. (`home_screen.dart:2044`)
+21. ✅ done — Sanitize imported filenames for path traversal; only persist original PDF bytes if actually referenced. (`import_service.dart:37`, `home_screen.dart:198`)
 
 ### R1-FUNCTIONAL (core UX + correctness blockers)
-22. **R1-22 · Multi-page PDF = one document.** Keep PDF as ONE `NotePage` with a page list (`pageIndex` already in schema), swipe/prev-next + page thumbnail strip; **"import as new doc vs insert"** option (GoodNotes/Notability parity). Kill per-page-note explosion **and orphaned original PDF** (each page gets its own PNG; the raw PDF file leaks on disk). Move rendering/PNG/file IO off the UI isolate. (`home_screen.dart:199-232`, `import_service.dart:121-187`)
+22. **R1-22 · Multi-page PDF = one document.** ✅ New imports: PDF is ONE `NotePage` pointing at the raw PDF; editor renders the current page on demand, has a prev/next pager + "all pages" thumbnail strip, resumes on the last-viewed page (`pageIndex`), and keeps per-page annotations (strokes carry a `page` field). Per-page PNG explosion + orphaned original eliminated. **Remaining:** "import as new doc vs insert" option (GoodNotes/Notability parity); migrate legacy per-page-note PDF imports (each is a separate note with a PNG bg, sourceFileType `image` — left as-is); isolate-offload of render/PNG/IO (needs pdfrx isolate verification, deferred from R1-15). (`home_screen.dart:215-227`, `import_service.dart`, `editor_screen.dart` `_PdfPager`/`_PdfPageStrip`)
 23. **R1-23 Mobile drill-down navigation.** Replace 3 sibling tabs with Notebook → tap → sections → tap → pages, breadcrumb `Notebook / Section / Page`, `Icons.chevron_right` disclosure; **auto-navigate on select & auto-select newly created section** so the visible panel actually changes. Fix "click does nothing". (`home_screen.dart:2075-2093,935,1147`, `app_state.dart:171-213`)
 24. **R1-24 Give Sections a purpose.** Remove forced single "Quick Notes"; "New section" CTA + empty-state explanation; highlight section in Pages header. (`app_state.dart:190`, `repository.dart:54-64`)
-25. **R1-25 Restore reachable `select`/pan tool.** Add to toolbar so pinch-zoom/pan actually works — `panEnabled/scaleEnabled` only fire when `tool==StrokeTool.select`, which has NO visible button and no real select behavior. (`annotation_canvas.dart:211-212,445-446`, `editor_screen.dart:692-700,463-468`)
-26. **R1-26 Add "Move to Section / Move to Notebook"** on page menu (needs repo `movePage` + refresh). (`home_screen.dart` page menu)
-27. **R1-27 Add content search** — simple `WHERE strokesJson LIKE` on text strokes first; later FTS5 (`database.db`, `home_screen.dart`).
+25. ✅ done — **R1-25 Restore reachable `select`/pan tool.** Add to toolbar so pinch-zoom/pan actually works — `panEnabled/scaleEnabled` only fire when `tool==StrokeTool.select`. (`annotation_canvas.dart:211-212,445-446`, `editor_screen.dart:692-700,463-468`)
+26. ✅ done — **R1-26 Add "Move to Section / Move to Notebook"** on page menu (needs repo `movePage` + refresh). (`home_screen.dart` page menu)
+27. ✅ done — **R1-27 Add content search** — simple `WHERE strokesJson LIKE` on text strokes first; later FTS5 (`database.db`, `home_screen.dart`).
 28. **R1-28 Rebuild import flow non-blocking** — progress sheet + per-file status + cancel + "PDF will create N pages" preview + undo; won't force-push last page. (`home_screen.dart:171-282`)
-29. **R1-29 Kill fake OCR/plugins.** OCR returns hard-coded text ("Invoice #INV-2026", "Store: Noteflow Inc.") keyed on title; `downloadPlugin` is a fake progress timer. Implement real on-device OCR or remove; drop fake "downloads". (`home_screen.dart:2003-2059`, `plugin_loader_service.dart:16-65`)
+29. ✅ done — **R1-29 Kill fake OCR/plugins.** OCR and fake downloads removed; DOCX converts natively offline directly. (`home_screen.dart:2003-2059`, `plugin_loader_service.dart:16-65`)
 
 ### R1-CORRECTNESS (races, leaks, silent bugs)
 - ✅ 30-36 done (`e4b1e6e` for 30-34, next commit for 35-36)

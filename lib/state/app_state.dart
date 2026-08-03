@@ -11,19 +11,13 @@ import '../services/autosave_service.dart';
 import '../services/settings_service.dart';
 import '../services/encryption_service.dart';
 import '../services/p2p_share_service.dart';
-import '../services/plugin_loader_service.dart';
 import '../services/security_service.dart';
 import '../theme/app_theme.dart';
 import '../core/ids.dart';
 
 /// Central app state: theme, active notebook/section/page, and navigation.
 class AppState extends ChangeNotifier {
-  AppState(this._repo, this._settings) : _autosave = AutosaveService(_repo) {
-    _pluginLoader = PluginLoaderService(_settings.prefs);
-  }
-
-  late final PluginLoaderService _pluginLoader;
-  PluginLoaderService get pluginLoader => _pluginLoader;
+  AppState(this._repo, this._settings) : _autosave = AutosaveService(_repo);
 
   /// OS-keystore-backed security layer (R1-7). The random DEK used for E2E
   /// content encryption is persisted through this service.
@@ -301,6 +295,14 @@ class AppState extends ChangeNotifier {
   Future<void> deletePage(String id) async {
     final p = await _repo.page(id);
     await _repo.deletePage(id, sourceFilePath: p?.sourceFilePath);
+    await _reloadTree();
+  }
+
+  Future<void> movePage(String pageId, String sectionId) async {
+    await _repo.movePage(pageId, sectionId);
+    if (_page?.id == pageId) {
+      _page = await _repo.page(pageId);
+    }
     await _reloadTree();
   }
 
