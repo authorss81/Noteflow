@@ -98,7 +98,8 @@ class _MarkdownPreviewScreenState extends State<MarkdownPreviewScreen> {
                   : MarkdownBody(
                       data: _text,
                       selectable: true,
-                      imageBuilder: (uri, title, alt) {
+                      sizedImageBuilder: (config) {
+                        final uri = config.uri;
                         final scheme = uri.scheme.toLowerCase();
                         if (scheme == 'http' || scheme == 'https') {
                           return Container(
