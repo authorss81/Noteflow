@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -295,6 +299,12 @@ class AppState extends ChangeNotifier {
 
   String _uuid() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 
+  /// Generates a cryptographically random 16-byte salt (base64-encoded).
+  static List<int> _randomSalt() {
+    final rand = Random.secure();
+    return List<int>.generate(16, (_) => rand.nextInt(256));
+  }
+
   bool _authenticated = false;
   bool get authenticated => _authenticated;
 
@@ -303,14 +313,18 @@ class AppState extends ChangeNotifier {
 
   Future<bool> setMasterPassword(String password) async {
     try {
-      final salt = _uuid().codeUnits.sublist(0, 16);
-      final key = await EncryptionService.deriveKey(password, salt);
-      final verifier = await EncryptionService.encrypt('noteflow_verifier', key);
+      final salt = _randomSalt();
+      // KEK = Argon2id(password, salt)
+      final kek = await EncryptionService.deriveKey(password, salt);
+      // Random data-encryption key. All note content is encrypted with the DEK;
+      // the KEK only ever wraps the DEK.
+      final dek = await EncryptionService.generateDek();
+      final wrappedDek = await EncryptionService.wrapDek(dek, kek);
 
-      await _settings.prefs.setString('master_password_salt', String.fromCharCodes(salt));
-      await _settings.prefs.setString('master_password_verifier', verifier);
+      await _settings.prefs.setString('master_password_salt', base64Encode(salt));
+      await _settings.prefs.setString('master_password_wrapped_dek', wrappedDek);
 
-      _repo.encryptionKey = key;
+      _repo.encryptionKey = dek;
       _authenticated = true;
       notifyListeners();
       return true;
@@ -322,33 +336,36 @@ class AppState extends ChangeNotifier {
   Future<bool> verifyMasterPassword(String password) async {
     try {
       final saltString = _settings.prefs.getString('master_password_salt');
-      final verifier = _settings.prefs.getString('master_password_verifier');
-      if (saltString == null || verifier == null) return false;
+      final wrappedDek = _settings.prefs.getString('master_password_wrapped_dek');
+      if (saltString == null || wrappedDek == null) return false;
 
-      final salt = saltString.codeUnits;
-      final key = await EncryptionService.deriveKey(password, salt);
-      final decrypted = await EncryptionService.decrypt(verifier, key);
+      final salt = base64Decode(saltString);
+      final kek = await EncryptionService.deriveKey(password, salt);
+      // Wrong password => GCM auth tag fails => throws => returns false.
+      final dek = await EncryptionService.unwrapDek(wrappedDek, kek);
 
-      if (decrypted == 'noteflow_verifier') {
-        _repo.encryptionKey = key;
-        _authenticated = true;
-        notifyListeners();
-        return true;
-      }
-    } catch (_) {}
-    return false;
+      _repo.encryptionKey = dek;
+      _authenticated = true;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<bool> setBiometricEnabled(bool enabled, String masterPassword) async {
     try {
       final verify = await verifyMasterPassword(masterPassword);
-      if (!verify) return false;
+      if (!verify || _repo.encryptionKey == null) return false;
 
       if (enabled) {
-        await _secureStorage.write(key: 'master_password', value: masterPassword);
+        // Store only the random DEK (not the human-readable master password).
+        // flutter_secure_storage keeps it in the OS keystore/keychain.
+        final dekBytes = await _repo.encryptionKey!.extractBytes();
+        await _secureStorage.write(key: 'master_dek', value: base64Encode(dekBytes));
         await _settings.prefs.setBool('biometric_auth_enabled', true);
       } else {
-        await _secureStorage.delete(key: 'master_password');
+        await _secureStorage.delete(key: 'master_dek');
         await _settings.prefs.setBool('biometric_auth_enabled', false);
       }
       notifyListeners();
@@ -361,9 +378,13 @@ class AppState extends ChangeNotifier {
   Future<bool> verifyBiometricsAndUnlock() async {
     if (!biometricEnabled) return false;
     try {
-      final masterPassword = await _secureStorage.read(key: 'master_password');
-      if (masterPassword == null) return false;
-      return await verifyMasterPassword(masterPassword);
+      final dekB64 = await _secureStorage.read(key: 'master_dek');
+      if (dekB64 == null) return false;
+      final dek = SecretKey(base64Decode(dekB64));
+      _repo.encryptionKey = dek;
+      _authenticated = true;
+      notifyListeners();
+      return true;
     } catch (_) {
       return false;
     }
@@ -371,9 +392,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> removeMasterPassword() async {
     await _settings.prefs.remove('master_password_salt');
-    await _settings.prefs.remove('master_password_verifier');
+    await _settings.prefs.remove('master_password_wrapped_dek');
     await _settings.prefs.remove('biometric_auth_enabled');
-    await _secureStorage.delete(key: 'master_password');
+    await _secureStorage.delete(key: 'master_dek');
     _repo.encryptionKey = null;
     _authenticated = false;
     notifyListeners();

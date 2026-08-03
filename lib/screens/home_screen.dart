@@ -332,6 +332,30 @@ class _MaintenanceMenu extends StatelessWidget {
     return null;
   }
 
+  /// Sanitizes a backup archive's relative import path (Zip-Slip protection,
+  /// R1-5). Returns `null` if the path could escape the imports directory.
+  ///
+  /// Rules:
+  /// - Must not be empty.
+  /// - Must not be absolute (leading `/`, `\`, or drive letter like `C:`).
+  /// - Must not contain any `..` segment (parent traversal).
+  /// - Must not contain NUL characters.
+  String? _safeImportRelativePath(String raw) {
+    final normalized = raw.replaceAll('\\', '/');
+    if (normalized.isEmpty) return null;
+    if (normalized.startsWith('/')) return null;
+    if (RegExp(r'^[a-zA-Z]:').hasMatch(normalized)) return null;
+    if (normalized.contains('\x00')) return null;
+
+    final segments = normalized.split('/');
+    for (final segment in segments) {
+      if (segment.isEmpty) return null;
+      if (segment == '..') return null;
+      if (segment == '.') continue;
+    }
+    return segments.join(Platform.pathSeparator);
+  }
+
   Future<void> _exportBackup(BuildContext context) async {
     if (kIsWeb) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -468,7 +492,15 @@ class _MaintenanceMenu extends StatelessWidget {
           if (filename == 'noteflow.sqlite') {
             await File(dbFile.path).writeAsBytes(data, flush: true);
           } else if (filename.startsWith('imports/')) {
-            final relativePath = filename.substring('imports/'.length);
+            // Zip-Slip protection: reject any entry that could escape the
+            // imports directory (absolute paths, drive letters, or `..`
+            // segments). See R1-5.
+            final relativePath = _safeImportRelativePath(
+              filename.substring('imports/'.length),
+            );
+            if (relativePath == null) {
+              throw StateError('Backup contains an unsafe file path: $filename');
+            }
             final targetPath = '${importsDir.path}${Platform.pathSeparator}$relativePath';
             final targetFile = File(targetPath);
             await targetFile.create(recursive: true);
