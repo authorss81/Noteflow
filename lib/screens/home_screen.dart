@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 
 import '../models/note_models.dart';
 import '../models/stroke.dart';
+import '../core/ids.dart';
 import '../services/import_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -288,98 +289,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  String _strokeId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-
+  // R1-28: non-blocking import. The system picker already runs off the UI
+  // thread; the actual import (persist + addPage) runs in a modal progress
+  // sheet so the user sees per-file status and can cancel. No page is pushed
+  // into the editor; the user stays on the pages panel and taps a new page.
   Future<void> _importFiles(BuildContext context, AppState app) async {
+    if (app.section == null && app.sections.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Create a section first to import pages into it.')),
+      );
+      return;
+    }
     final import =
         ImportService(keyProvider: () => app.repo.encryptionKey);
     final files = await import.pickFiles();
     if (files.isEmpty) return;
-    NotePage? lastPage;
-    int importedCount = 0;
-    for (final f in files) {
-      if (!context.mounted) return;
-      final ext = import.extensionOf(f.name);
-      if (ext == 'docx') {
-        final markdownText = PluginLoaderService.convertDocxToMarkdown(f.bytes);
-        final docxTitle = f.name.replaceAll('.docx', '.md');
-        final path = await import.persistFile(docxTitle, utf8.encode(markdownText));
-        final page = await app.addPage(
-          title: docxTitle,
-          sourceFilePath: path,
-          sourceFileType: 'text',
-        );
-        lastPage = page;
-        importedCount++;
-        continue;
-      }
-      final type = import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text';
-      final path = await import.persistFile(f.name, f.bytes);
-      if (type == 'pdf') {
-        // R1-22: a multi-page PDF is ONE document. Only the raw PDF is
-        // persisted (no per-page PNG explosion, no orphaned original) and the
-        // editor renders the current page on demand from the raw file.
-        final page = await app.addPage(
-          title: f.name,
-          sourceFilePath: path,
-          sourceFileType: type,
-          pageIndex: 0,
-        );
-        lastPage = page;
-        importedCount++;
-      } else {
-        final page = await app.addPage(
-          title: f.name,
-          sourceFilePath: path,
-          sourceFileType: type,
-        );
-        lastPage = page;
-        importedCount++;
-        if (type == 'text') {
-          // Pre-render imported text as a text annotation so it's not a blank page.
-          final text = import.decodeText(f.bytes);
-          if (text.trim().isNotEmpty) {
-            await app.repo.saveStrokes(page.id, [
-              Stroke(
-                id: _strokeId(),
-                tool: StrokeTool.text,
-                color: const Color(0xFF1B365D),
-                width: 3,
-                text: text,
-                start: const Offset(32, 48),
-              )
-            ]);
-          }
-        }
-      }
-    }
     if (!context.mounted) return;
-    if (importedCount > 0) {
-      _triggerConfetti();
-      HapticFeedback.mediumImpact();
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Imported $importedCount page(s)')),
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (_) => _ImportProgressSheet(
+        app: app,
+        files: files,
+        onFinished: (importedCount) {
+          if (importedCount > 0) {
+            _triggerConfetti();
+            HapticFeedback.mediumImpact();
+          }
+        },
+      ),
     );
-    // Open the last imported page in the editor right away.
-    if (lastPage != null) {
-      final lastExt = import.extensionOf(lastPage.title);
-      if (lastExt == 'md') {
-        Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => MarkdownPreviewScreen(
-            page: lastPage!,
-            autosave: app.autosave,
-          ),
-        ));
-      } else {
-        Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => EditorScreen(
-            page: lastPage!,
-            autosave: app.autosave,
-          ),
-        ));
-      }
-    }
   }
 
   @override
@@ -1036,8 +978,12 @@ class _ThemeMenu extends StatelessWidget {
 
 // ---------- Notebooks panel ----------
 class _NotebookPanel extends StatelessWidget {
-  const _NotebookPanel({required this.app});
+  const _NotebookPanel({required this.app, this.onOpen});
   final AppState app;
+
+  /// Optional navigation callback (mobile drill-down, R1-23). When null the
+  /// panel just selects the notebook (wide 3-pane layout).
+  final void Function(Notebook)? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -1057,10 +1003,11 @@ class _NotebookPanel extends StatelessWidget {
                   tooltip: 'New notebook',
                   onPressed: () => promptName(context, 'New notebook',
                       onSubmit: (name) {
-                        if (name.isNotEmpty) {
-                          app.addNotebook(name);
+                        if (name.isEmpty) return;
+                        app.addNotebook(name).then((n) {
                           HapticFeedback.mediumImpact();
-                        }
+                          onOpen?.call(n);
+                        });
                       }),
                 ),
                 _ThemeMenu(app: app),
@@ -1108,7 +1055,13 @@ class _NotebookPanel extends StatelessWidget {
                             PopupMenuItem(value: 'delete', child: Text('Delete')),
                           ],
                         ),
-                        onTap: () => app.selectNotebook(n.id),
+                        onTap: () {
+                          if (onOpen != null) {
+                            onOpen!(n);
+                          } else {
+                            app.selectNotebook(n.id);
+                          }
+                        },
                       );
                     },
                   ),
@@ -1203,8 +1156,12 @@ void confirmDelete(BuildContext context, String title, String body, VoidCallback
 
 // ---------- Sections panel ----------
 class _SectionPanel extends StatelessWidget {
-  const _SectionPanel({required this.app});
+  const _SectionPanel({required this.app, this.onOpen});
   final AppState app;
+
+  /// Optional navigation callback (mobile drill-down, R1-23). When null the
+  /// panel just selects the section (wide 3-pane layout).
+  final void Function(Section)? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -1223,10 +1180,11 @@ class _SectionPanel extends StatelessWidget {
                   icon: const Icon(Icons.add),
                   tooltip: 'New section',
                   onPressed: () => promptName(context, 'New section', onSubmit: (name) {
-                    if (name.isNotEmpty) {
-                      app.addSection(name);
+                    if (name.isEmpty) return;
+                    app.addSection(name).then((s) {
                       HapticFeedback.mediumImpact();
-                    }
+                      onOpen?.call(s);
+                    });
                   }),
                 ),
               ],
@@ -1234,9 +1192,21 @@ class _SectionPanel extends StatelessWidget {
           ),
           Expanded(
             child: app.sections.isEmpty
-                ? const _AnimatedEmptyState(
+                ? _AnimatedEmptyState(
                     icon: Icons.folder_open,
                     text: 'Create a section to organize your note pages.',
+                    action: FilledButton.icon(
+                      onPressed: () => promptName(context, 'New section',
+                          onSubmit: (name) {
+                        if (name.isEmpty) return;
+                        app.addSection(name).then((s) {
+                          HapticFeedback.mediumImpact();
+                          onOpen?.call(s);
+                        });
+                      }),
+                      icon: const Icon(Icons.add),
+                      label: const Text('New section'),
+                    ),
                   )
                 : ListView.builder(
                     itemCount: app.sections.length,
@@ -1272,7 +1242,13 @@ class _SectionPanel extends StatelessWidget {
                             PopupMenuItem(value: 'delete', child: Text('Delete')),
                           ],
                         ),
-                        onTap: () => app.selectSection(s.id),
+                        onTap: () {
+                          if (onOpen != null) {
+                            onOpen!(s);
+                          } else {
+                            app.selectSection(s.id);
+                          }
+                        },
                       );
                     },
                   ),
@@ -1327,6 +1303,13 @@ class _PageListPanel extends StatelessWidget {
   final VoidCallback onConfetti;
 
   void _addPageDialog(BuildContext context, AppState app) {
+    if (app.section == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Create a section first to add pages to it.')),
+      );
+      return;
+    }
     final titleController = TextEditingController(text: 'Untitled');
     String template = 'blank';
 
@@ -1404,6 +1387,11 @@ class _PageListPanel extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
+                if (app.section != null) ...[
+                  Icon(Icons.folder_outlined,
+                      size: 20, color: scheme.primary),
+                  const SizedBox(width: 8),
+                ],
                 Text(app.section?.name ?? 'Pages',
                     style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
@@ -2199,35 +2187,137 @@ class _PageTile extends StatelessWidget {
 }
 
 // ---------- Mobile layout ----------
-class _MobileHome extends StatelessWidget {
+/// Mobile drill-down navigation (R1-23): Notebook → Sections → Pages, with a
+/// breadcrumb + back affordance. Replaces the old 3-sibling tabs where
+/// tapping a notebook never changed the visible panel.
+class _MobileHome extends StatefulWidget {
   const _MobileHome({required this.app, required this.onImport, required this.onConfetti});
   final AppState app;
   final VoidCallback onImport;
   final VoidCallback onConfetti;
 
   @override
+  State<_MobileHome> createState() => _MobileHomeState();
+}
+
+class _MobileHomeState extends State<_MobileHome> {
+  /// 0 = notebooks, 1 = sections, 2 = pages.
+  int _level = 0;
+
+  void _openNotebook(Notebook n) {
+    widget.app.selectNotebook(n.id);
+    if (!mounted) return;
+    setState(() => _level = 1);
+  }
+
+  void _openSection(Section s) {
+    widget.app.selectSection(s.id);
+    if (!mounted) return;
+    setState(() => _level = 2);
+  }
+
+  void _goBack() {
+    if (_level == 0) return;
+    if (!mounted) return;
+    setState(() => _level -= 1);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.menu_book_outlined), text: 'Notebooks'),
-              Tab(icon: Icon(Icons.folder_outlined), text: 'Sections'),
-              Tab(icon: Icon(Icons.description_outlined), text: 'Pages'),
-            ],
+    return Column(
+      children: [
+        if (_level > 0)
+          _MobileBreadcrumb(
+            notebookName: widget.app.notebook?.name,
+            sectionName: _level > 1 ? widget.app.section?.name : null,
+            onBack: _goBack,
+            onNotebookTap: () {
+              if (!mounted) return;
+              setState(() => _level = 1);
+            },
+            onSectionTap: () {
+              if (!mounted) return;
+              setState(() => _level = 2);
+            },
           ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _NotebookPanel(app: app),
-                _SectionPanel(app: app),
-                _PageListPanel(app: app, onImport: onImport, onConfetti: onConfetti),
-              ],
+        Expanded(
+          child: switch (_level) {
+            0 => _NotebookPanel(app: widget.app, onOpen: _openNotebook),
+            1 => _SectionPanel(app: widget.app, onOpen: _openSection),
+            _ => _PageListPanel(
+                app: widget.app,
+                onImport: widget.onImport,
+                onConfetti: widget.onConfetti,
+              ),
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Slim back + breadcrumb bar shown above the mobile panels (R1-23).
+class _MobileBreadcrumb extends StatelessWidget {
+  const _MobileBreadcrumb({
+    required this.notebookName,
+    required this.sectionName,
+    required this.onBack,
+    required this.onNotebookTap,
+    required this.onSectionTap,
+  });
+
+  final String? notebookName;
+  final String? sectionName;
+  final VoidCallback onBack;
+  final VoidCallback onNotebookTap;
+  final VoidCallback onSectionTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      child: SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Back',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: onBack,
             ),
-          ),
-        ],
+            if (notebookName != null)
+              InkWell(
+                onTap: onNotebookTap,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    notebookName!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
+            if (sectionName != null) ...[
+              Icon(Icons.chevron_right,
+                  size: 18, color: scheme.onSurfaceVariant),
+              InkWell(
+                onTap: onSectionTap,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    sectionName!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2312,4 +2402,209 @@ class ConfettiPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+enum _ImportStatus { pending, processing, done, failed }
+
+/// Modal import progress (R1-28): imports each picked file with per-file
+/// status and a cancel button, without blocking the UI or force-opening a page.
+class _ImportProgressSheet extends StatefulWidget {
+  const _ImportProgressSheet({
+    required this.app,
+    required this.files,
+    this.onFinished,
+  });
+
+  final AppState app;
+  final List<ImportedFile> files;
+  final void Function(int importedCount)? onFinished;
+
+  @override
+  State<_ImportProgressSheet> createState() => _ImportProgressSheetState();
+}
+
+class _ImportProgressSheetState extends State<_ImportProgressSheet> {
+  final Map<int, _ImportStatus> _status = {};
+  bool _cancelled = false;
+  bool _finished = false;
+  int _importedCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _run();
+  }
+
+  Future<void> _run() async {
+    final import =
+        ImportService(keyProvider: () => widget.app.repo.encryptionKey);
+    for (var i = 0; i < widget.files.length; i++) {
+      if (_cancelled) break;
+      if (!mounted) return;
+      setState(() => _status[i] = _ImportStatus.processing);
+      try {
+        await _importOne(import, widget.files[i]);
+        if (!mounted) return;
+        setState(() {
+          _status[i] = _ImportStatus.done;
+          _importedCount++;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _status[i] = _ImportStatus.failed);
+      }
+    }
+    if (!mounted) return;
+    setState(() => _finished = true);
+    widget.onFinished?.call(_importedCount);
+  }
+
+  Future<void> _importOne(ImportService import, ImportedFile f) async {
+    final app = widget.app;
+    final ext = import.extensionOf(f.name);
+    if (ext == 'docx') {
+      final markdownText = PluginLoaderService.convertDocxToMarkdown(f.bytes);
+      final docxTitle = f.name.replaceAll('.docx', '.md');
+      final path = await import.persistFile(docxTitle, utf8.encode(markdownText));
+      await app.addPage(
+        title: docxTitle,
+        sourceFilePath: path,
+        sourceFileType: 'text',
+      );
+      return;
+    }
+    final type =
+        import.isPdf(ext) ? 'pdf' : import.isImage(ext) ? 'image' : 'text';
+    final path = await import.persistFile(f.name, f.bytes);
+    if (type == 'pdf') {
+      // R1-22: a multi-page PDF is ONE document. Only the raw PDF is persisted
+      // (no per-page PNG explosion, no orphaned original) and the editor
+      // renders the current page on demand from the raw file.
+      await app.addPage(
+        title: f.name,
+        sourceFilePath: path,
+        sourceFileType: type,
+        pageIndex: 0,
+      );
+    } else {
+      final page = await app.addPage(
+        title: f.name,
+        sourceFilePath: path,
+        sourceFileType: type,
+      );
+      if (type == 'text') {
+        // Pre-render imported text as a text annotation so it's not a blank page.
+        final text = import.decodeText(f.bytes);
+        if (text.trim().isNotEmpty) {
+          await app.repo.saveStrokes(page.id, [
+            Stroke(
+              id: newId(),
+              tool: StrokeTool.text,
+              color: const Color(0xFF1B365D),
+              width: 3,
+              text: text,
+              start: const Offset(32, 48),
+            )
+          ]);
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  _finished ? 'Import complete' : 'Importing…',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const Spacer(),
+                if (_finished)
+                  Icon(Icons.check_circle, color: scheme.primary)
+                else
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$_importedCount / ${widget.files.length} file(s) imported',
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 320),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: widget.files.length,
+                itemBuilder: (context, i) {
+                  final status = _status[i] ?? _ImportStatus.pending;
+                  return ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: _statusIcon(status, scheme),
+                    title: Text(
+                      widget.files[i].name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: status == _ImportStatus.failed
+                        ? Icon(Icons.error_outline, color: scheme.error)
+                        : null,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (_finished)
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Done'),
+                  )
+                else
+                  TextButton(
+                    onPressed: _cancelled
+                        ? null
+                        : () {
+                            setState(() => _cancelled = true);
+                            Navigator.pop(context);
+                          },
+                    child: const Text('Cancel'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statusIcon(_ImportStatus status, ColorScheme scheme) {
+    return switch (status) {
+      _ImportStatus.pending =>
+        Icon(Icons.schedule, color: scheme.onSurfaceVariant),
+      _ImportStatus.processing => const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      _ImportStatus.done => Icon(Icons.check_circle, color: scheme.primary),
+      _ImportStatus.failed => Icon(Icons.error_outline, color: scheme.error),
+    };
+  }
 }

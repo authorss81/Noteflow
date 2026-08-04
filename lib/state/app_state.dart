@@ -110,7 +110,7 @@ class AppState extends ChangeNotifier {
       _notebook = await _repo.ensureDefaultNotebook();
       _section = await _repo.ensureDefaultSection(_notebook!.id);
       await _reloadTree(
-          selectNotebook: _notebook!.id, selectSection: _section!.id);
+          selectNotebook: _notebook!.id, selectSection: _section?.id);
       // Restore last session position if valid.
       final lastNb = _settings.activeNotebookId;
       final lastSec = _settings.activeSectionId;
@@ -232,17 +232,25 @@ class AppState extends ChangeNotifier {
   Future<Notebook> addNotebook(String name) async {
     final n = Notebook(id: _uuid(), name: name.trim(), createdAt: DateTime.now());
     await _repo.insertNotebook(n);
-    await _repo.insertSection(Section(
-        id: _uuid(), notebookId: n.id, name: 'Quick Notes', createdAt: DateTime.now()));
+    // R1-24: no more forced "Quick Notes" section — sections are created
+    // deliberately (with an empty-state CTA).
     await _reloadTree(selectNotebook: n.id);
     return n;
   }
 
-  Future<void> addSection(String name) async {
-    if (_notebook == null) return;
-    await _repo.insertSection(
-        Section(id: _uuid(), notebookId: _notebook!.id, name: name.trim(), createdAt: DateTime.now()));
-    await _reloadTree();
+  Future<Section> addSection(String name) async {
+    if (_notebook == null) {
+      throw StateError('No notebook selected');
+    }
+    final s = Section(
+        id: _uuid(),
+        notebookId: _notebook!.id,
+        name: name.trim(),
+        createdAt: DateTime.now());
+    await _repo.insertSection(s);
+    // R1-23: auto-select the new section so the pages panel actually changes.
+    await _reloadTree(selectSection: s.id);
+    return s;
   }
 
   Future<NotePage> addPage({

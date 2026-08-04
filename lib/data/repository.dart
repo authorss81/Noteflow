@@ -88,22 +88,11 @@ class NoteRepository {
     return result;
   }
 
-  Future<Section> ensureDefaultSection(String notebookId) async {
+  /// Returns the first section of [notebookId], or `null` when it has none.
+  /// R1-24: no forced "Quick Notes" — sections are created deliberately.
+  Future<Section?> ensureDefaultSection(String notebookId) async {
     final existing = await sections(notebookId);
-    if (existing.isNotEmpty) return existing.first;
-    final s = Section(
-      id: _id(),
-      notebookId: notebookId,
-      name: 'Quick Notes',
-      createdAt: DateTime.now(),
-    );
-    await _db.insertSection(SectionsCompanion.insert(
-      id: s.id,
-      notebookId: s.notebookId,
-      name: await _encryptMeta(s.name),
-      createdAt: s.createdAt,
-    ));
-    return s;
+    return existing.isNotEmpty ? existing.first : null;
   }
 
   // ---- Pages ----

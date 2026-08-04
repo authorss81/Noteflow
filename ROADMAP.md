@@ -1,6 +1,6 @@
 # Noteflow — Detailed Roadmap
 
-> Last updated: 2026-08-03
+> Last updated: 2026-08-04
 > Hardware constraint: AMD Athlon 200GE (2C/4T, ~2.7 GB free RAM)
 > Build strategy: cloud builds via GitHub Actions (no local Android SDK)
 > All dependencies must be FOSS or free for commercial use.
@@ -15,7 +15,7 @@
 | P1 — Usable day-to-day | ✅ done |
 | P2 — Real annotation app | 🟡 partially done (see §Review) |
 | P3 — Data safety & multi-device | 🟡 partially done (see §Review) |
-| R1 — Immediate fixes & security hardening | 🔥 DO NOW (new phase) |
+| R1 — Immediate fixes & security hardening | 🟡 done (see R1-15/22/28 remaining notes) |
 | E1 — Engagement / delight ("fun") | 🔄 planned after R1 |
 | P4 — World-class | 📋 **moved LATER** |
 | P5 — Platform & multi-device vision | 📋 **moved LATER** |
@@ -87,12 +87,12 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 
 ### R1-FUNCTIONAL (core UX + correctness blockers)
 22. **R1-22 · Multi-page PDF = one document.** ✅ New imports: PDF is ONE `NotePage` pointing at the raw PDF; editor renders the current page on demand, has a prev/next pager + "all pages" thumbnail strip, resumes on the last-viewed page (`pageIndex`), and keeps per-page annotations (strokes carry a `page` field). Per-page PNG explosion + orphaned original eliminated. **Remaining:** "import as new doc vs insert" option (GoodNotes/Notability parity); migrate legacy per-page-note PDF imports (each is a separate note with a PNG bg, sourceFileType `image` — left as-is); isolate-offload of render/PNG/IO (needs pdfrx isolate verification, deferred from R1-15). (`home_screen.dart:215-227`, `import_service.dart`, `editor_screen.dart` `_PdfPager`/`_PdfPageStrip`)
-23. **R1-23 Mobile drill-down navigation.** Replace 3 sibling tabs with Notebook → tap → sections → tap → pages, breadcrumb `Notebook / Section / Page`, `Icons.chevron_right` disclosure; **auto-navigate on select & auto-select newly created section** so the visible panel actually changes. Fix "click does nothing". (`home_screen.dart:2075-2093,935,1147`, `app_state.dart:171-213`)
-24. **R1-24 Give Sections a purpose.** Remove forced single "Quick Notes"; "New section" CTA + empty-state explanation; highlight section in Pages header. (`app_state.dart:190`, `repository.dart:54-64`)
+23. ✅ done — **R1-23 Mobile drill-down navigation.** Mobile home is now a real drill-down: Notebook → tap → sections → tap → pages, with a `_MobileBreadcrumb` (`back` + `Notebook › Section`, both tappable) and `Icons.chevron_right` disclosure. Selecting a notebook/section always navigates (wide layout still shows all three panels side-by-side), and newly created sections/notebooks auto-select into the drill-down. Fix "click does nothing". (`home_screen.dart` `_MobileHomeState`/`_MobileBreadcrumb`, `app_state.dart:171-213`)
+24. ✅ done — **R1-24 Give Sections a purpose.** No more forced "Quick Notes": `ensureDefaultSection` returns the first section or `null` (never auto-creates); `addSection` auto-selects the new section; empty-state has a "New section" CTA; the Pages header shows the current section (folder icon + name); imports and blank-page creation guard with "Create a section first…" when none exists. (`repository.dart:54-64`, `app_state.dart:190`, `home_screen.dart`)
 25. ✅ done — **R1-25 Restore reachable `select`/pan tool.** Add to toolbar so pinch-zoom/pan actually works — `panEnabled/scaleEnabled` only fire when `tool==StrokeTool.select`. (`annotation_canvas.dart:211-212,445-446`, `editor_screen.dart:692-700,463-468`)
 26. ✅ done — **R1-26 Add "Move to Section / Move to Notebook"** on page menu (needs repo `movePage` + refresh). (`home_screen.dart` page menu)
 27. ✅ done — **R1-27 Add content search** — simple `WHERE strokesJson LIKE` on text strokes first; later FTS5 (`database.db`, `home_screen.dart`).
-28. **R1-28 Rebuild import flow non-blocking** — progress sheet + per-file status + cancel + "PDF will create N pages" preview + undo; won't force-push last page. (`home_screen.dart:171-282`)
+28. ✅ done — **R1-28 Rebuild import flow non-blocking** — a modal progress sheet shows per-file status (pending/processing/done/failed) with a live counter and a Cancel button; the UI never blocks and no page is force-pushed into the editor afterwards. **Remaining:** "PDF will create N pages" preview and import undo (deferred — partial imports are covered by the version restore). (`home_screen.dart` `_ImportProgressSheet`)
 29. ✅ done — **R1-29 Kill fake OCR/plugins.** OCR and fake downloads removed; DOCX converts natively offline directly. (`home_screen.dart:2003-2059`, `plugin_loader_service.dart:16-65`)
 
 ### R1-CORRECTNESS (races, leaks, silent bugs)
@@ -106,8 +106,8 @@ See **§R1** for the prioritized fixes, **§E1** for engagement/delight UX work.
 36. **`exit(0)` after backup restore.** ~~hard-kill anti-pattern.~~ ✅ graceful `reloadAfterRestore()`: swap in fresh `AppDatabase`/`NoteRepository`, stop P2P, re-lock, re-bootstrap; master-password prefs kept so the existing password still unlocks the restored vault. (`app_state.dart`, `home_screen.dart:533`)
 
 ### R1-Release & CI
-37. Replace placeholder `applicationId`; create prod keystore (`key.properties` secret in GH Actions); build **AAB** not just debug APK; pin `drift_dev` version; `-Xmx8G` in `gradle.properties` risks GitHub runner OOM → reduce to 4G.
-38. Add a `flutter analyze` + `flutter test` gate (both workflows already call them); add a secrets scan.
+37. ✅ done (partial) — Replace placeholder `applicationId`; create prod keystore (`key.properties` secret in GH Actions); build **AAB** not just debug APK; pin `drift_dev` version; `-Xmx8G` in `gradle.properties` risks GitHub runner OOM → reduced to 4G.
+38. ✅ done — Add a `flutter analyze` + `flutter test` gate (both workflows call them); ✅ secrets scan added (**gitleaks** step in `android.yml` + `release.yml`, runs right after checkout).
 39. Note: `flutter_secure_storage` on Windows/Linux may fall back to weaker storage — document/limit cross-platform.
 
 **Definition of done for R1:**
